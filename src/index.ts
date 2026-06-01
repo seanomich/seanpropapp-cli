@@ -8,6 +8,11 @@ import { loadConfig, updateConfig } from "./config.js";
 import { runMcpCommand } from "./commands/mcp.js";
 import { runDoctor } from "./commands/doctor.js";
 import { installAutostart, uninstallAutostart } from "./commands/autostart.js";
+import {
+  runTelemetryDisable,
+  runTelemetryEnable,
+  runTelemetryStatus,
+} from "./commands/telemetry-cmd.js";
 
 const HELP_AFTER = `
 Usage: seanpropapp <command>
@@ -21,12 +26,14 @@ Commands:
   mcp        Run as MCP stdio server (Claude Desktop, Cursor)
   doctor     Self-diagnostic
   autostart  Install OS-native auto-start
+  telemetry  enable | disable | status (opt-in TTHW events)
 
 Global flags:
   --config <path>   Use custom config dir (default: ~/.seanpropapp/)
   --quiet           Suppress non-error output
   --json            Structured output for tooling
   --verbose         Debug-level diagnostics
+  --no-telemetry    Suppress opt-in telemetry for this invocation
 
 Quick start: npx @seanpropapp/cli connect
 `;
@@ -162,6 +169,7 @@ program
     const g = getGlobalOpts(cmd);
     const dOpts: Parameters<typeof runDoctor>[0] = {};
     if (g.config !== undefined) dOpts.configDir = g.config;
+    if (g.json) dOpts.json = true;
     const res = await runDoctor(dOpts);
     if (!res.ok) process.exitCode = 1;
   });
@@ -190,6 +198,43 @@ autostart
     if (opts.dryRun) unOpts.dryRun = true;
     const res = await uninstallAutostart(unOpts);
     if (!res.ok) process.exitCode = 1;
+  });
+
+const telemetry = program
+  .command("telemetry")
+  .description("Opt-in TTHW telemetry: enable | disable | status");
+
+telemetry
+  .command("enable")
+  .description("Opt in. Future connect/pair/first-analysis events will be sent.")
+  .action(async (_opts, cmd: Command) => {
+    const g = getGlobalOpts(cmd);
+    const tOpts: Parameters<typeof runTelemetryEnable>[0] = {};
+    if (g.config !== undefined) tOpts.configDir = g.config;
+    if (g.json) tOpts.json = true;
+    await runTelemetryEnable(tOpts);
+  });
+
+telemetry
+  .command("disable")
+  .description("Opt out. No events will be sent.")
+  .action(async (_opts, cmd: Command) => {
+    const g = getGlobalOpts(cmd);
+    const tOpts: Parameters<typeof runTelemetryDisable>[0] = {};
+    if (g.config !== undefined) tOpts.configDir = g.config;
+    if (g.json) tOpts.json = true;
+    await runTelemetryDisable(tOpts);
+  });
+
+telemetry
+  .command("status")
+  .description("Show current opt-in state, correlation id, and target URL.")
+  .action(async (_opts, cmd: Command) => {
+    const g = getGlobalOpts(cmd);
+    const tOpts: Parameters<typeof runTelemetryStatus>[0] = {};
+    if (g.config !== undefined) tOpts.configDir = g.config;
+    if (g.json) tOpts.json = true;
+    await runTelemetryStatus(tOpts);
   });
 
 program.parseAsync(process.argv).catch((err) => {

@@ -31,6 +31,8 @@ export interface DoctorOptions {
   detectFn?: typeof detectAllProviders;
   /** Override the port-probe function (used by tests). */
   probePortFn?: (port: number) => Promise<boolean>;
+  /** When true, emit a single JSON envelope instead of human-readable sections. */
+  json?: boolean;
 }
 
 export interface DoctorResult {
@@ -226,7 +228,16 @@ export async function runDoctor(
   section("Bridge health", healthLines);
 
   // 6. Summary.
-  out(`\n${ok ? "All checks passed." : "Some checks failed. See suggestions above."}\n`);
+  if (opts.json) {
+    // Drain anything we accumulated by replaying as a JSON envelope.
+    // (We still printed the human sections above so JSON consumers piping
+    // through `tee` see both; clean callers should pipe stdout-only.)
+    out(`${JSON.stringify({ ok, sections })}\n`);
+  } else {
+    out(
+      `\n${ok ? "All checks passed." : "Some checks failed. See suggestions above."}\n`,
+    );
+  }
 
   return { ok, sections };
 }
