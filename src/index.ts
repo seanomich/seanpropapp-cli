@@ -5,9 +5,9 @@ import { runConnect } from "./commands/connect.js";
 import { runPair } from "./commands/pair.js";
 import { runBridgeForeground, spawnBackgroundBridge } from "./commands/bridge.js";
 import { loadConfig, updateConfig } from "./config.js";
-import { runAutostartPlaceholder } from "./commands/placeholders.js";
 import { runMcpCommand } from "./commands/mcp.js";
 import { runDoctor } from "./commands/doctor.js";
+import { installAutostart, uninstallAutostart } from "./commands/autostart.js";
 
 const HELP_AFTER = `
 Usage: seanpropapp <command>
@@ -161,10 +161,31 @@ program
     if (!res.ok) process.exitCode = 1;
   });
 
-program
+const autostart = program
   .command("autostart")
-  .description("Install OS-native auto-start")
-  .action(() => runAutostartPlaceholder());
+  .description("Install OS-native auto-start (macOS LaunchAgent, Linux systemd, Windows Task Scheduler)");
+
+autostart
+  .command("install")
+  .description("Install the OS-native supervisor entry")
+  .option("--dry-run", "Write the unit/plist but skip launchctl/systemctl", false)
+  .action(async (opts: { dryRun: boolean }) => {
+    const installOpts: Parameters<typeof installAutostart>[0] = {};
+    if (opts.dryRun) installOpts.dryRun = true;
+    const res = await installAutostart(installOpts);
+    if (!res.ok) process.exitCode = 1;
+  });
+
+autostart
+  .command("uninstall")
+  .description("Remove the OS-native supervisor entry")
+  .option("--dry-run", "Delete the unit/plist file but skip launchctl/systemctl", false)
+  .action(async (opts: { dryRun: boolean }) => {
+    const unOpts: Parameters<typeof uninstallAutostart>[0] = {};
+    if (opts.dryRun) unOpts.dryRun = true;
+    const res = await uninstallAutostart(unOpts);
+    if (!res.ok) process.exitCode = 1;
+  });
 
 program.parseAsync(process.argv).catch((err) => {
   process.stderr.write(`Error: ${err instanceof Error ? err.message : String(err)}\n`);
