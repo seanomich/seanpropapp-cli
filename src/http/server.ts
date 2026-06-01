@@ -14,7 +14,12 @@ export const MAX_PORT_FALLBACK = 17500;
 
 export interface StartServerOptions {
   port?: number;
-  token: string;
+  /**
+   * Either a literal token (the simple v0.1.0-alpha shape) or a getter that
+   * returns the current token. The getter form lets the bridge process
+   * rotate tokens on SIGHUP without restarting the HTTP listener.
+   */
+  token: string | (() => string);
   /** Optional provider overrides for testing. */
   providers?: {
     claude?: Provider;

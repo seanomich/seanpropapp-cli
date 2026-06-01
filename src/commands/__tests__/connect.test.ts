@@ -45,6 +45,7 @@ describe("connect command", () => {
       noBridgeFork: false, // we'll override below via probe-only path
       skipInstallPrompt: true,
       skipBrowserOpen: true,
+      skipBridgeHealthcheck: true,
       providers: {
         claude: fakeProvider("claude", true),
         codex: fakeProvider("codex", false),

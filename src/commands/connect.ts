@@ -46,6 +46,12 @@ export interface ConnectOptions {
   fakePairedAt?: string;
   /** When true, suppress telemetry emit for this run (--no-telemetry). */
   noTelemetry?: boolean;
+  /**
+   * Test seam: skip the post-spawn bridge healthcheck. Production code never
+   * sets this; only the connect.test.ts happy-path test does so it can run
+   * without an actual `dist/` build to spawn.
+   */
+  skipBridgeHealthcheck?: boolean;
 }
 
 export interface ConnectResult {
@@ -191,6 +197,7 @@ export async function runConnect(
       port: bridgePort,
       token,
       ...(opts.configDir ? { configDir: opts.configDir } : {}),
+      ...(opts.skipBridgeHealthcheck ? { skipHealthcheck: true } : {}),
     });
   }
 

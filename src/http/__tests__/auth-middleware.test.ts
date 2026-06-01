@@ -51,4 +51,28 @@ describe("auth-middleware", () => {
     const body = (await res.json()) as { ok: boolean };
     expect(body.ok).toBe(true);
   });
+
+  it("getter form re-reads the token on every request (SIGHUP rotation)", async () => {
+    let currentToken = "first-token";
+    const app = new Hono();
+    app.use("*", makeAuthMiddleware(() => currentToken));
+    app.get("/ping", (c) => c.json({ ok: true }));
+
+    let res = await app.request("/ping", {
+      headers: { Authorization: "Bearer first-token" },
+    });
+    expect(res.status).toBe(200);
+
+    currentToken = "second-token";
+
+    res = await app.request("/ping", {
+      headers: { Authorization: "Bearer first-token" },
+    });
+    expect(res.status).toBe(401);
+
+    res = await app.request("/ping", {
+      headers: { Authorization: "Bearer second-token" },
+    });
+    expect(res.status).toBe(200);
+  });
 });
