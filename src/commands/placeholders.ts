@@ -5,7 +5,7 @@
  */
 
 const COMING_SOON =
-  "Coming in Lane C-Polish — see TODOS in the v1.4.0 release PR.\n";
+  "Coming in Lane C-Polish: see TODOS in the v1.4.0 release PR.\n";
 
 export function runMcpPlaceholder(): void {
   process.stdout.write(`mcp: ${COMING_SOON}`);
