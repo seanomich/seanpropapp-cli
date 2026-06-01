@@ -7,10 +7,6 @@
 const COMING_SOON =
   "Coming in Lane C-Polish: see TODOS in the v1.4.0 release PR.\n";
 
-export function runDoctorPlaceholder(): void {
-  process.stdout.write(`doctor: ${COMING_SOON}`);
-}
-
 export function runAutostartPlaceholder(): void {
   process.stdout.write(`autostart: ${COMING_SOON}`);
 }

@@ -26,12 +26,17 @@ describe("CLI plumbing (requires `npm run build` first)", () => {
     expect(res.stdout).toMatch(/Quick start: npx @seanpropapp\/cli connect/);
   });
 
-  it("doctor prints the placeholder message", () => {
+  it("doctor runs the real diagnostic and prints section headings", () => {
     if (!existsSync(distEntry)) return;
     const res = spawnSync(process.execPath, [distEntry, "doctor"], {
       encoding: "utf8",
     });
-    expect(res.status).toBe(0);
-    expect(res.stdout).toMatch(/Lane C-Polish/);
+    // Exit code may be 0 or 1 depending on whether the host has Claude CLI
+    // installed + pairing complete. We only verify the diagnostic actually ran.
+    expect(res.stdout).toMatch(/System\n/);
+    expect(res.stdout).toMatch(/Providers\n/);
+    expect(res.stdout).toMatch(/Bridge ports\n/);
+    expect(res.stdout).toMatch(/Config\n/);
+    expect(res.stdout).toMatch(/Bridge health\n/);
   });
 });

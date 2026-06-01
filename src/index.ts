@@ -5,11 +5,9 @@ import { runConnect } from "./commands/connect.js";
 import { runPair } from "./commands/pair.js";
 import { runBridgeForeground, spawnBackgroundBridge } from "./commands/bridge.js";
 import { loadConfig, updateConfig } from "./config.js";
-import {
-  runAutostartPlaceholder,
-  runDoctorPlaceholder,
-} from "./commands/placeholders.js";
+import { runAutostartPlaceholder } from "./commands/placeholders.js";
 import { runMcpCommand } from "./commands/mcp.js";
+import { runDoctor } from "./commands/doctor.js";
 
 const HELP_AFTER = `
 Usage: seanpropapp <command>
@@ -155,7 +153,13 @@ program
 program
   .command("doctor")
   .description("Self-diagnostic")
-  .action(() => runDoctorPlaceholder());
+  .action(async (_opts, cmd: Command) => {
+    const g = getGlobalOpts(cmd);
+    const dOpts: Parameters<typeof runDoctor>[0] = {};
+    if (g.config !== undefined) dOpts.configDir = g.config;
+    const res = await runDoctor(dOpts);
+    if (!res.ok) process.exitCode = 1;
+  });
 
 program
   .command("autostart")
