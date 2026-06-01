@@ -10,7 +10,7 @@ npx @seanpropapp/cli connect
 
 That's it. Click the link that appears, confirm the device in your browser, and your SeanPropApp workspace is now powered by your AI subscription.
 
-Time to hello world: about 3 minutes on a fresh machine (Claude CLI install included). Faster on subsequent runs.
+Time to hello world: about 3 minutes on a fresh machine (Claude CLI install included). Reconnects on a paired machine take a couple of seconds.
 
 ## What this is
 
