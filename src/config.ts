@@ -16,6 +16,12 @@ const ConfigSchema = z.object({
   paired_at: z.string().optional(),
   device_name: z.string().optional(),
   providers_detected: ProvidersDetectedSchema.optional(),
+  /** MCP bearer token for stdio MCP server (issued at /mcp-setup). */
+  mcp_token: z.string().optional(),
+  /** Stable UUID used to correlate cli_* telemetry events. */
+  correlation_id: z.string().optional(),
+  /** Opt-in telemetry switch. Defaults to OFF when missing. */
+  telemetry_enabled: z.boolean().optional(),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

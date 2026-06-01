@@ -8,8 +8,8 @@ import { loadConfig, updateConfig } from "./config.js";
 import {
   runAutostartPlaceholder,
   runDoctorPlaceholder,
-  runMcpPlaceholder,
 } from "./commands/placeholders.js";
+import { runMcpCommand } from "./commands/mcp.js";
 
 const HELP_AFTER = `
 Usage: seanpropapp <command>
@@ -145,7 +145,12 @@ program
 program
   .command("mcp")
   .description("Run as MCP stdio server (Claude Desktop, Cursor)")
-  .action(() => runMcpPlaceholder());
+  .action(async (_opts, cmd: Command) => {
+    const g = getGlobalOpts(cmd);
+    const mcpOpts: Parameters<typeof runMcpCommand>[0] = {};
+    if (g.config !== undefined) mcpOpts.configDir = g.config;
+    await runMcpCommand(mcpOpts);
+  });
 
 program
   .command("doctor")
