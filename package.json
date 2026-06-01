@@ -1,0 +1,56 @@
+{
+  "name": "@seanpropapp/cli",
+  "version": "0.1.0-alpha.1",
+  "description": "Run SeanPropApp proposition analyses on your existing Claude Pro or ChatGPT Plus subscription via a local bridge.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Sean O'Neill",
+  "homepage": "https://prop.seanoneill.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/seanpropapp/cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/seanpropapp/cli/issues"
+  },
+  "bin": {
+    "seanpropapp": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit",
+    "prepublishOnly": "npm run lint && npm test && npm run build"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "hono": "^4.6.0",
+    "open": "^10.1.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "seanpropapp",
+    "cli",
+    "claude",
+    "codex",
+    "bridge",
+    "anthropic",
+    "openai",
+    "mcp"
+  ]
+}
