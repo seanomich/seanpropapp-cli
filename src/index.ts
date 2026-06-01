@@ -36,6 +36,7 @@ interface GlobalOptionsShape {
   quiet?: boolean;
   json?: boolean;
   verbose?: boolean;
+  telemetry?: boolean;
 }
 
 function getGlobalOpts(cmd: Command): GlobalOptionsShape {
@@ -62,6 +63,9 @@ program
   .addOption(new Option("--quiet", "Suppress non-error output"))
   .addOption(new Option("--json", "Structured output for tooling"))
   .addOption(new Option("--verbose", "Debug-level diagnostics"))
+  .addOption(
+    new Option("--no-telemetry", "Suppress opt-in telemetry for this invocation"),
+  )
   .addHelpText("after", HELP_AFTER);
 
 program
@@ -75,6 +79,7 @@ program
     if (g.config !== undefined) connectOpts.configDir = g.config;
     if (opts.port !== undefined) connectOpts.port = opts.port;
     if (opts.bridgeFork === false) connectOpts.noBridgeFork = true;
+    if (g.telemetry === false) connectOpts.noTelemetry = true;
     const result = await runConnect(connectOpts);
     if (!result.success) process.exitCode = 1;
   });

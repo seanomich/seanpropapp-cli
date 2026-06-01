@@ -13,6 +13,7 @@ import {
 import { planClaudeInstall, runInstall } from "./install-claude.js";
 import { confirm } from "./prompt.js";
 import { spawnBackgroundBridge } from "./bridge.js";
+import { emitConnectStart } from "../telemetry.js";
 
 const HANDSHAKE_TIMEOUT_MS = 60_000;
 const HANDSHAKE_POLL_MS = 1_000;
@@ -43,6 +44,8 @@ export interface ConnectOptions {
    * immediately at this timestamp.
    */
   fakePairedAt?: string;
+  /** When true, suppress telemetry emit for this run (--no-telemetry). */
+  noTelemetry?: boolean;
 }
 
 export interface ConnectResult {
@@ -73,6 +76,12 @@ export async function runConnect(
   const out = opts.stdout ?? ((s: string) => process.stdout.write(s));
   const err = opts.stderr ?? ((s: string) => process.stderr.write(s));
   const t0 = Date.now();
+
+  // Fire-and-forget telemetry. Swallowed silently if disabled or offline.
+  void emitConnectStart({
+    ...(opts.configDir !== undefined ? { configDir: opts.configDir } : {}),
+    ...(opts.noTelemetry ? { forceDisable: true } : {}),
+  });
 
   // 1. Detect Claude CLI.
   out("Looking for Claude CLI on your system...\n");
