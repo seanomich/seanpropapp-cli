@@ -30,6 +30,7 @@
     "prepublishOnly": "npm run lint && npm test && npm run build"
   },
   "dependencies": {
+    "@hono/node-server": "^2.0.4",
     "commander": "^12.1.0",
     "hono": "^4.6.0",
     "open": "^10.1.0",
