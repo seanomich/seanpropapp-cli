@@ -1,7 +1,6 @@
 # @seanpropapp/cli
 
-Run [SeanPropApp](https://prop.seanoneill.com) proposition analyses on your
-existing Claude Pro or ChatGPT Plus subscription. No API key, no extra cost.
+Run [SeanPropApp](https://prop.seanoneill.com) proposition analyses on your existing Claude Pro or ChatGPT Plus subscription. No API key, no extra cost.
 
 ## Quick start
 
@@ -9,67 +8,56 @@ existing Claude Pro or ChatGPT Plus subscription. No API key, no extra cost.
 npx @seanpropapp/cli connect
 ```
 
-That's it. Click the link that appears, confirm the device, and your
-SeanPropApp workspace is now powered by your AI subscription.
+That's it. Click the link that appears, confirm the device in your browser, and your SeanPropApp workspace is now powered by your AI subscription.
 
-Time to hello world: about 3 minutes (Champion tier coming in v1.5).
+Time to hello world: about 3 minutes on a fresh machine (Claude CLI install included). Faster on subsequent runs.
 
 ## What this is
 
-A small open-source CLI that runs locally on your computer and lets the
-SeanPropApp browser app send requests to your Claude or ChatGPT subscription
-without an API key. Your tokens stay between your computer and your AI
-provider.
+A small open-source CLI that runs locally on your computer and lets the SeanPropApp browser app send LLM requests to your Claude or ChatGPT subscription without an API key. Your prompts and your provider responses stay between your computer and your AI provider; this repo only ships the bridge code.
 
 ## What you need
 
-- Node 18 or later (run `node --version` to check).
+- Node 18 or later (run `node --version`).
 - A Claude Pro subscription OR a ChatGPT Plus subscription.
-- The Claude CLI or Codex CLI installed (we will guide you through it).
+- The Claude CLI or Codex CLI installed. `connect` will guide you through this on first run.
 
 ## Commands
 
-| Command     | What it does                                              |
-|-------------|-----------------------------------------------------------|
-| `connect`   | Start everything and pair with your browser (use this first). |
-| `bridge`    | Run the bridge server explicitly.                         |
-| `pair`      | Generate a new pair URL.                                  |
-| `mcp`       | Run as an MCP stdio server (Claude Desktop, Cursor).      |
-| `doctor`    | Self-diagnostic.                                          |
-| `autostart` | Install OS-native auto-start.                             |
+| Command             | What it does                                                |
+|---------------------|-------------------------------------------------------------|
+| `connect`           | Start everything and pair with your browser. Use this first.|
+| `bridge`            | Run the bridge server explicitly.                           |
+| `pair`              | Generate a new pair URL.                                    |
+| `mcp`               | Run as an MCP stdio server (Claude Desktop, Cursor).        |
+| `doctor`            | Self-diagnostic with actionable suggestions.                |
+| `autostart install` | Install an OS-native supervisor so the bridge starts at login. See [docs/autostart-macos.md](./docs/autostart-macos.md), [docs/autostart-linux.md](./docs/autostart-linux.md), [docs/autostart-windows.md](./docs/autostart-windows.md). |
+| `telemetry`         | `enable`, `disable`, or `status`. Default is off.           |
 
-Global flags: `--config <path>`, `--quiet`, `--json`, `--verbose`.
+Global flags: `--config <path>`, `--quiet`, `--json`, `--verbose`, `--no-telemetry`.
 
 ## How it works
 
-The CLI runs a small HTTP server on `127.0.0.1` (default port `17492`). The
-SeanPropApp browser workspace sends LLM requests to that local URL, attaching a
-Bearer pair token that lives only on your machine. The CLI in turn shells out
-to your installed Claude CLI or Codex CLI, which runs against your subscription.
+The CLI runs a small HTTP server on `127.0.0.1` (default port `17492`, falling back through `17500`). The SeanPropApp browser workspace sends LLM requests to that local URL, attaching a Bearer pair token that lives only on your machine. The CLI in turn shells out to your installed Claude CLI or Codex CLI, which runs against your subscription.
 
-Architecture documentation: see the `ENG_PLAN_v140.md` in the
-`seanpropapp/proposition-app` repo (link to be added with v1.4.0 release).
+The bridge accepts requests only from `https://prop.seanoneill.com` (and `http://localhost:3000` for development); every other Origin is rejected with 403.
 
 ## Trust signals
 
-- Source code: 100% visible in this repository.
-- License: MIT.
-- npm provenance: every release will be attested (set up in Lane C-Polish).
-- Telemetry: opt-in only; see `TELEMETRY.md` (added in Lane C-Polish).
-- Security disclosures: security@seanoneill.com.
-- Files in the npm package: see `npm pack --dry-run`.
+- **Source code:** 100% in this repository. Review the bridge HTTP server, providers, and command code before installing.
+- **License:** MIT.
+- **npm provenance:** every release is published with `--provenance` (see [.github/workflows/publish.yml](./.github/workflows/publish.yml)).
+- **Telemetry:** opt-in only. See [TELEMETRY.md](./TELEMETRY.md).
+- **Security disclosure:** [SECURITY.md](./SECURITY.md) (mailto: security@seanoneill.com).
+- **Files in the npm package:** run `npm pack --dry-run` to see exactly what we ship. Currently `dist/`, `README.md`, `LICENSE`.
 
 ## Status
 
-This is `0.1.0-alpha.1`, the foundational half of the v1.4.0 release. The
-`connect`, `bridge`, and `pair` commands are live. `mcp`, `doctor`, and
-`autostart` will land in the Lane C-Polish follow-up alongside CI, npm
-provenance, and the per-OS autostart docs.
+v0.1.0-beta.1. The connect/bridge/pair/mcp/doctor/autostart/telemetry commands are live. CI + npm-provenance publish are set up. The workspace-side TTHW dashboard (TX8) ships with v1.4.0 of the proposition-app workspace; until then, telemetry events land but are not visualized in-app.
 
 ## Contributing
 
-Issues and pull requests welcome at
-[github.com/seanpropapp/cli](https://github.com/seanpropapp/cli).
+See [CONTRIBUTING.md](./CONTRIBUTING.md). Issues and pull requests welcome at [github.com/seanpropapp/cli](https://github.com/seanpropapp/cli).
 
 ## License
 
