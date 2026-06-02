@@ -3,6 +3,7 @@ import { z } from "zod";
 import { ClassifiedError } from "../providers/base.js";
 import type { Provider } from "../providers/base.js";
 import { encodeAnthropicSSE } from "./sse.js";
+import { streamingResponseCorsHeaders } from "./cors.js";
 
 const MessagesRequestSchema = z.object({
   model: z.string().min(1),
@@ -106,12 +107,18 @@ export function makeMessagesHandler(deps: MessagesDeps) {
       }
     })();
 
+    // The raw `new Response()` here bypasses Hono's response builder, so the
+    // CORS headers set by corsMiddleware on the context never reach the wire.
+    // We must inject them inline; otherwise the browser blocks the streaming
+    // response with "No Access-Control-Allow-Origin header is present" even
+    // though the preflight succeeded.
     return new Response(readable, {
       status: 200,
       headers: {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache, no-transform",
         Connection: "keep-alive",
+        ...streamingResponseCorsHeaders(c.req.header("Origin")),
       },
     });
   };

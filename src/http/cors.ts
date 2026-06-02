@@ -13,6 +13,32 @@ export function isOriginAllowed(origin: string | null | undefined): boolean {
 }
 
 /**
+ * Headers a streaming response must carry alongside its own Content-Type so
+ * the browser does NOT block the response with "No Access-Control-Allow-Origin
+ * header is present" after the preflight already succeeded.
+ *
+ * The corsMiddleware sets these on the Hono context for normal responses, but
+ * when a handler returns a raw `new Response(stream, ...)` (as the
+ * /v1/messages and /v1/chat/completions streamers do) it BYPASSES Hono's
+ * response builder and the middleware headers never reach the wire. Callers
+ * MUST spread these into the response init.
+ *
+ * Returns an empty object when the Origin is unknown or not allowlisted, so
+ * the helper composes safely with no-origin/curl traffic. The middleware will
+ * have already 403'd disallowed origins by the time we get to the handler.
+ */
+export function streamingResponseCorsHeaders(
+  origin: string | null | undefined,
+): Record<string, string> {
+  if (!isOriginAllowed(origin)) return {};
+  return {
+    "Access-Control-Allow-Origin": origin as string,
+    "Access-Control-Allow-Credentials": "false",
+    Vary: "Origin",
+  };
+}
+
+/**
  * Strict CORS middleware: only allows the SeanPropApp prod origin + local dev.
  * Rejects all other origins with 403. Preflights cached for 24h.
  */

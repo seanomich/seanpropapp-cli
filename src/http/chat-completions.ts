@@ -6,6 +6,7 @@ import type {
   AnthropicMessage,
   Provider,
 } from "../providers/base.js";
+import { streamingResponseCorsHeaders } from "./cors.js";
 import {
   anthropicEventToOpenAIChunk,
   encodeOpenAIChunk,
@@ -133,12 +134,15 @@ export function makeChatCompletionsHandler(deps: ChatCompletionsDeps) {
       }
     })();
 
+    // See messages-endpoint.ts for the same rationale: the raw `new Response()`
+    // bypasses Hono's middleware-set headers, so CORS must be injected inline.
     return new Response(readable, {
       status: 200,
       headers: {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache, no-transform",
         Connection: "keep-alive",
+        ...streamingResponseCorsHeaders(c.req.header("Origin")),
       },
     });
   };

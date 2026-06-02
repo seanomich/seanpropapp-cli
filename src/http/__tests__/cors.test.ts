@@ -5,6 +5,7 @@ import {
   isOriginAllowed,
   ALLOWED_ORIGINS,
   PREFLIGHT_MAX_AGE_SECONDS,
+  streamingResponseCorsHeaders,
 } from "../cors.js";
 
 function buildApp() {
@@ -79,5 +80,33 @@ describe("cors", () => {
       "https://prop.seanoneill.com",
       "http://localhost:3000",
     ]);
+  });
+});
+
+describe("streamingResponseCorsHeaders", () => {
+  // Regression for the v0.1.0-beta.3 production bug: the /v1/messages and
+  // /v1/chat/completions handlers returned `new Response(stream, {...})`
+  // directly, which bypassed the headers set by the Hono middleware on the
+  // context. Chrome then blocked the streaming response with
+  //   Access to fetch at ... has been blocked by CORS policy:
+  //   No 'Access-Control-Allow-Origin' header is present on the requested resource.
+  // even though the preflight OPTIONS had succeeded. Both endpoints now spread
+  // the output of this helper into their Response init.
+  it("returns the CORS headers a streaming Response must carry for an allowlisted origin", () => {
+    const headers = streamingResponseCorsHeaders("https://prop.seanoneill.com");
+    expect(headers["Access-Control-Allow-Origin"]).toBe("https://prop.seanoneill.com");
+    expect(headers["Access-Control-Allow-Credentials"]).toBe("false");
+    expect(headers["Vary"]).toBe("Origin");
+  });
+
+  it("returns the same headers for the localhost dev origin", () => {
+    const headers = streamingResponseCorsHeaders("http://localhost:3000");
+    expect(headers["Access-Control-Allow-Origin"]).toBe("http://localhost:3000");
+  });
+
+  it("returns an empty object for null / undefined / disallowed origin so the helper composes safely", () => {
+    expect(streamingResponseCorsHeaders(null)).toEqual({});
+    expect(streamingResponseCorsHeaders(undefined)).toEqual({});
+    expect(streamingResponseCorsHeaders("https://evil.example.com")).toEqual({});
   });
 });

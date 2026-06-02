@@ -2,6 +2,16 @@
 
 All notable changes to this CLI are recorded here. The format is loosely Keep a Changelog; we add structure once the release cadence demands it.
 
+## 0.1.0-beta.4
+
+### Fixed
+
+- **Streaming `POST /v1/messages` and `POST /v1/chat/completions` responses were blocked by Chrome with "No 'Access-Control-Allow-Origin' header is present on the requested resource."** The CORS middleware sets the right headers on the Hono context, but both streaming endpoints returned a raw `new Response(stream, {...})` that bypassed the Hono response builder. Headers set via `c.header()` never reached the wire. The preflight OPTIONS succeeded (because that branch uses `c.body()`), but the actual streaming response from the bridge dropped the CORS headers entirely, and Chrome refused to read the body.
+
+  Detective work was the catch: dev tools showed `POST /v1/messages net::ERR_FAILED 200 (OK)` — server returned 200 but Chrome blocked it. Status 200 with a CORS error always means the preflight passed but the actual response is missing headers.
+
+  Fix introduces `streamingResponseCorsHeaders(origin)` in `cors.ts` that returns Access-Control-Allow-Origin + Vary + Allow-Credentials for allowlisted origins, empty object otherwise. Both streaming endpoints spread it into their Response init. Tests added for the helper.
+
 ## 0.1.0-beta.3
 
 ### Fixed
