@@ -57,7 +57,7 @@ v0.1.0-beta.1. The connect/bridge/pair/mcp/doctor/autostart/telemetry commands a
 
 ## Contributing
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md). Issues and pull requests welcome at [github.com/seanpropapp/cli](https://github.com/seanpropapp/cli).
+See [CONTRIBUTING.md](./CONTRIBUTING.md). Issues and pull requests welcome at [github.com/seanomich/seanpropapp-cli](https://github.com/seanomich/seanpropapp-cli).
 
 ## License
 
