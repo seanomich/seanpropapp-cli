@@ -21,6 +21,39 @@ export interface ClaudeProviderDeps {
 
 const DEFAULT_BINARY = "claude";
 
+/**
+ * Map an incoming Anthropic-style model name (whatever the browser sends in
+ * the POST body) to one of the three model tiers Claude CLI accepts on its
+ * `--model` flag: `opus`, `sonnet`, `haiku`.
+ *
+ * Inputs we handle:
+ *   - Bare CLI tier names (opus / sonnet / haiku) -> passthrough
+ *   - Anthropic API model IDs (claude-opus-4-7, claude-sonnet-4-6,
+ *     claude-haiku-4-5-...) -> matched by substring
+ *   - The literal 'subscription' that proposition-app's
+ *     src/lib/llm/models.ts has historically sent for all three
+ *     local_bridge tiers -> default to 'sonnet' (the balanced tier
+ *     subscriptions reliably have access to)
+ *   - Anything unrecognized -> 'sonnet' (sensible fallback rather than
+ *     letting Claude CLI reject the run)
+ *
+ * Future direction: the proposition-app models.ts is being updated to send
+ * the actual tier name per modelTier. Once that lands and propagates,
+ * 'subscription' will stop appearing in real traffic. The mapping stays as a
+ * safety net for older clients.
+ */
+export function mapToClaudeCliModel(model: string): "opus" | "sonnet" | "haiku" {
+  const normalized = model.toLowerCase();
+  if (normalized === "opus" || normalized === "sonnet" || normalized === "haiku") {
+    return normalized;
+  }
+  if (normalized.includes("opus")) return "opus";
+  if (normalized.includes("haiku")) return "haiku";
+  // 'sonnet', 'subscription', 'claude-sonnet-*', and unrecognized values all
+  // resolve to the balanced default tier.
+  return "sonnet";
+}
+
 const RATE_LIMIT_PATTERNS: RegExp[] = [
   /rate.?limit/i,
   /429/,
@@ -104,7 +137,14 @@ export class ClaudeProvider implements Provider {
       });
     }
 
-    const args = ["--print", "--model", request.model];
+    // Translate whatever the browser sent into one of Claude CLI's three
+    // accepted tier names (opus | sonnet | haiku). Passing the abstract
+    // 'subscription' that proposition-app/src/lib/llm/models.ts has been
+    // emitting causes Claude CLI to exit with:
+    //   "There's an issue with the selected model (subscription). It may
+    //    not exist or you may not have access to it."
+    const cliModel = mapToClaudeCliModel(request.model);
+    const args = ["--print", "--model", cliModel];
     if (request.system) {
       args.push("--system-prompt", request.system);
     }

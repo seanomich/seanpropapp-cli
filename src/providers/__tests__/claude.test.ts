@@ -3,6 +3,7 @@ import {
   ClaudeProvider,
   detectRateLimit,
   parseRetryAfter,
+  mapToClaudeCliModel,
 } from "../claude.js";
 import { ClassifiedError, type AnthropicSSEEvent } from "../base.js";
 import { FakeChildProcess } from "./test-helpers.js";
@@ -20,6 +21,34 @@ describe("claude provider — helpers", () => {
     expect(parseRetryAfter("retry-after 1800")).toBe(1800);
     expect(parseRetryAfter("try again in 90s")).toBe(90);
     expect(parseRetryAfter("nothing here")).toBeUndefined();
+  });
+
+  // Regression for v0.1.0-beta.4 production bug: proposition-app's models.ts
+  // emits 'subscription' as the model name for all three local_bridge tiers.
+  // Passing that straight to `claude --model` fails because Claude CLI only
+  // recognizes opus / sonnet / haiku. Translation defaults 'subscription' to
+  // 'sonnet' (the balanced tier subscriptions reliably have).
+  describe("mapToClaudeCliModel", () => {
+    it("passes through opus / sonnet / haiku verbatim (case-insensitive)", () => {
+      expect(mapToClaudeCliModel("opus")).toBe("opus");
+      expect(mapToClaudeCliModel("sonnet")).toBe("sonnet");
+      expect(mapToClaudeCliModel("haiku")).toBe("haiku");
+      expect(mapToClaudeCliModel("OPUS")).toBe("opus");
+      expect(mapToClaudeCliModel("Sonnet")).toBe("sonnet");
+    });
+    it("maps Anthropic API model IDs to the matching tier", () => {
+      expect(mapToClaudeCliModel("claude-opus-4-7")).toBe("opus");
+      expect(mapToClaudeCliModel("claude-sonnet-4-6")).toBe("sonnet");
+      expect(mapToClaudeCliModel("claude-haiku-4-5-20251001")).toBe("haiku");
+    });
+    it("maps the literal 'subscription' to 'sonnet' (the bug catcher)", () => {
+      expect(mapToClaudeCliModel("subscription")).toBe("sonnet");
+    });
+    it("falls back to 'sonnet' for unknown values rather than rejecting the run", () => {
+      expect(mapToClaudeCliModel("gpt-4o")).toBe("sonnet");
+      expect(mapToClaudeCliModel("")).toBe("sonnet");
+      expect(mapToClaudeCliModel("random-string")).toBe("sonnet");
+    });
   });
 });
 

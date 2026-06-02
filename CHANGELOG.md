@@ -2,6 +2,12 @@
 
 All notable changes to this CLI are recorded here. The format is loosely Keep a Changelog; we add structure once the release cadence demands it.
 
+## 0.1.0-beta.5
+
+### Fixed
+
+- **`claude --model subscription` was rejected by Claude CLI with "It may not exist or you may not have access to it."** proposition-app's `src/lib/llm/models.ts` emits the literal `subscription` as the model name for all three local_bridge tiers; the bridge was passing it straight through. Claude CLI only accepts `opus`, `sonnet`, or `haiku`. Added `mapToClaudeCliModel(model)` which translates the bare tier names verbatim, Anthropic API model IDs (claude-opus-4-7 etc) by substring, and defaults anything else, including the literal `subscription`, to `sonnet`. Future client-side change will start sending tier-specific names; the mapping stays as a safety net.
+
 ## 0.1.0-beta.4
 
 ### Fixed
