@@ -2,6 +2,13 @@
 
 All notable changes to this CLI are recorded here. The format is loosely Keep a Changelog; we add structure once the release cadence demands it.
 
+## 0.1.0-beta.2
+
+### Fixed
+
+- `dist/index.js` now has the executable bit set (was `-rw-r--r--` in beta.1, causing `npx @seanpropapp/cli` to fail with `command not found`). Build script appends `chmod +x dist/index.js` after `tsc`.
+- `src/version.ts` constant bumped to match `package.json`.
+
 ## 0.1.0-beta.1
 
 First public-feedback build. Everything below shipped in the Lane C-Polish pass on top of the Lane C-Core foundation.

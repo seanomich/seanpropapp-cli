@@ -6,4 +6,4 @@
  * imports awkward, and a hand-bumped constant is fine for a CLI whose version
  * is also pinned by npm install.
  */
-export const CLI_VERSION = "0.1.0-beta.1";
+export const CLI_VERSION = "0.1.0-beta.2";
