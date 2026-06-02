@@ -2,6 +2,14 @@
 
 All notable changes to this CLI are recorded here. The format is loosely Keep a Changelog; we add structure once the release cadence demands it.
 
+## 0.1.0-beta.3
+
+### Fixed
+
+- **Chat from prop.seanoneill.com to the local bridge silently failed in Chrome 130+ with `TypeError: Failed to fetch`.** Chrome enforces Private Network Access (PNA) on requests from public-origin pages to private network addresses (127.0.0.1). The bridge's CORS preflight (`OPTIONS /v1/messages`) now sends `Access-Control-Allow-Private-Network: true` to opt in, unblocking POST `/v1/messages` from the browser. Without this header, fresh preflights (no cached entry) fail at the browser layer with no console signal beyond the generic TypeError. Cached preflights from earlier sessions (24h `Max-Age`) would continue to work, which masked the bug during local testing where the bridge always bound the same port across reconnects. The fix is unconditional — Safari and Firefox currently ignore the header, so there is no compatibility downside.
+
+  Symptom catch: when the browser's bridge port-walk shows orphan bridges responding (401 token mismatch) but the live bridge returning `Failed to fetch`, that delta is PNA. The orphans worked off cached preflight; the new bridge didn't have one. Issue: https://github.com/seanomich/proposition-app discovered during v1.4.0 user testing 2026-06-02.
+
 ## 0.1.0-beta.2
 
 ### Fixed

@@ -60,6 +60,10 @@ describe("cors", () => {
     );
     expect(res.headers.get("access-control-allow-methods")).toContain("POST");
     expect(res.headers.get("access-control-allow-headers")).toMatch(/authorization/i);
+    // PNA opt-in: Chrome 130+ blocks https-public to localhost-private
+    // requests unless the preflight carries this header. Required for chat
+    // POSTs to /v1/messages to succeed in modern Chrome.
+    expect(res.headers.get("access-control-allow-private-network")).toBe("true");
   });
 
   it("allows localhost dev origin", async () => {

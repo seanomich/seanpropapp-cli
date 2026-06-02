@@ -1,6 +1,6 @@
 {
   "name": "@seanpropapp/cli",
-  "version": "0.1.0-beta.2",
+  "version": "0.1.0-beta.3",
   "description": "Run SeanPropApp proposition analyses on your existing Claude Pro or ChatGPT Plus subscription via a local bridge.",
   "type": "module",
   "license": "MIT",

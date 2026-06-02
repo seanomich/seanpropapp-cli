@@ -39,6 +39,17 @@ export const corsMiddleware: MiddlewareHandler = async (c, next) => {
       "Access-Control-Allow-Headers",
       "Authorization, Content-Type",
     );
+    // Chrome 130+ enforces Private Network Access (PNA) for requests from a
+    // public origin (https://prop.seanoneill.com) to a private network address
+    // (127.0.0.1). The bridge MUST opt in by responding with this header on
+    // the preflight or Chrome will silently block every POST /v1/messages
+    // call. The browser's actual request will set
+    //   Access-Control-Request-Private-Network: true
+    // automatically; we don't need to inspect it, just opt in unconditionally
+    // because our cors.ts allowlist already gates which origins are
+    // allowed at all. Safari + Firefox ignore the header (currently no PNA
+    // enforcement), so this is safe to send to every browser.
+    c.header("Access-Control-Allow-Private-Network", "true");
     c.header("Access-Control-Max-Age", String(PREFLIGHT_MAX_AGE_SECONDS));
     return c.body(null, 204);
   }
