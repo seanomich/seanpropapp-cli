@@ -2,6 +2,12 @@
 
 All notable changes to this CLI are recorded here. The format is loosely Keep a Changelog; we add structure once the release cadence demands it.
 
+## 0.1.0-beta.7
+
+### Fixed
+
+- **Module re-runs through the bridge returned a stub instead of analysis ("there's nothing above to regenerate or incorporate").** The Claude provider piped only the *last* user message to `claude --print` (`lastUserText`), silently discarding all assistant turns and earlier user turns. proposition-app's module RE-RUN packs the prior output and the user's corrections into earlier turns and ends with a short "regenerate from the conversation above" instruction — so the model received that instruction with no conversation, and refused. `buildClaudePrompt(req)` now sends a single user turn verbatim (unchanged for first runs and chat) and flattens multi-turn conversations into a role-labeled `Human:`/`Assistant:` transcript so the full context reaches the model. `codex.ts` was unaffected (it already serialized the full message array). Regression tests + a multi-turn case in the shared bridge contract fixture. (proposition-app#446, #8)
+
 ## 0.1.0-beta.6
 
 ### Added

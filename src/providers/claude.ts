@@ -83,18 +83,53 @@ export function parseRetryAfter(text: string): number | undefined {
   return undefined;
 }
 
-function lastUserText(req: AnthropicLikeRequest): string {
-  for (let i = req.messages.length - 1; i >= 0; i--) {
-    const m = req.messages[i];
-    if (!m) continue;
-    if (m.role !== "user") continue;
-    if (typeof m.content === "string") return m.content;
-    return m.content
-      .filter((block) => block.type === "text" && typeof block.text === "string")
-      .map((block) => block.text ?? "")
-      .join("\n");
+/** Flatten a message's string|block content into plain text. */
+function messageText(m: AnthropicLikeRequest["messages"][number]): string {
+  if (typeof m.content === "string") return m.content;
+  return m.content
+    .filter((block) => block.type === "text" && typeof block.text === "string")
+    .map((block) => block.text ?? "")
+    .join("\n");
+}
+
+/**
+ * Build the single stdin prompt for `claude --print` from an Anthropic-style
+ * messages array.
+ *
+ * Claude CLI's `--print` mode takes ONE prompt on stdin; it has no native
+ * multi-turn input. A single user turn is sent verbatim — the overwhelmingly
+ * common case (first module run, chat). For a multi-turn conversation we MUST
+ * NOT send only the last turn: proposition-app's module RE-RUN packs the prior
+ * output and the user's corrections into earlier turns, then ends with a short
+ * "regenerate from the conversation above" instruction. Sending only that last
+ * turn left the model with nothing to regenerate, so re-runs returned a stub
+ * ("there's nothing above to regenerate or incorporate").
+ *
+ * Fix: flatten every turn into a role-labeled transcript (Human:/Assistant:)
+ * so the full conversation reaches the model. The system prompt is passed
+ * separately via --system-prompt and is not included here.
+ *
+ * Regression: proposition-app#446 / seanpropapp-cli#8 (shipped broken in
+ * v0.1.0-beta.6 via the old lastUserText()).
+ */
+export function buildClaudePrompt(req: AnthropicLikeRequest): string {
+  const turns = req.messages.filter((m) => messageText(m).trim().length > 0);
+  // Single turn (or none): send the message text verbatim — identical to the
+  // pre-fix single-message behavior, so first runs and chat are unchanged.
+  if (turns.length <= 1) {
+    return turns.length === 1 ? messageText(turns[0]!) : "";
   }
-  return "";
+  // Multi-turn: preserve the full conversation as a labeled transcript.
+  return turns
+    .map((m) => {
+      const text = messageText(m);
+      if (m.role === "assistant") return `Assistant: ${text}`;
+      // 'system' messages don't normally appear here (the client sends system
+      // separately), but if one does, include its text without a turn label.
+      if (m.role === "system") return text;
+      return `Human: ${text}`;
+    })
+    .join("\n\n");
 }
 
 export class ClaudeProvider implements Provider {
@@ -148,7 +183,7 @@ export class ClaudeProvider implements Provider {
     if (request.system) {
       args.push("--system-prompt", request.system);
     }
-    const stdinPayload = lastUserText(request);
+    const stdinPayload = buildClaudePrompt(request);
 
     const child = this.deps.spawnFn(detected.binary, args, {
       stdio: ["pipe", "pipe", "pipe"],
