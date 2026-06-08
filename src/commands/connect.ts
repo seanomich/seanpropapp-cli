@@ -6,6 +6,7 @@ import type { Provider, ProviderDetectResult } from "../providers/base.js";
 import { startServer } from "../http/server.js";
 import { updateConfig, loadConfig } from "../config.js";
 import {
+  appBaseUrl,
   generatePairToken,
   osc8Link,
   pairUrl,
@@ -17,7 +18,9 @@ import { emitConnectStart } from "../telemetry.js";
 
 const HANDSHAKE_TIMEOUT_MS = 60_000;
 const HANDSHAKE_POLL_MS = 1_000;
-const SAMPLE_URL = "https://prop.seanoneill.com/workspace?sample=true";
+// Honors SEANPROPAPP_URL (see appBaseUrl) so local testing opens the dev
+// workspace instead of production.
+const SAMPLE_URL = `${appBaseUrl()}/workspace?sample=true`;
 
 export interface ConnectOptions {
   /** When true, the bridge runs in this process instead of being detached. */

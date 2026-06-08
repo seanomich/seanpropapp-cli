@@ -1,6 +1,24 @@
 import { randomBytes } from "node:crypto";
 
-export const PAIR_BASE_URL = "https://prop.seanoneill.com/pair";
+export const PROD_APP_URL = "https://prop.seanoneill.com";
+export const PAIR_BASE_URL = `${PROD_APP_URL}/pair`;
+
+/**
+ * Base URL of the SeanPropApp web app the CLI pairs against. Defaults to
+ * production. Override with the SEANPROPAPP_URL env var to point the connect /
+ * pair / sample flows at a local dev server, e.g.:
+ *
+ *   SEANPROPAPP_URL=http://localhost:3000 npx @seanpropapp/cli connect
+ *
+ * This is what lets us run a real bridge pairing pass against localhost:3000
+ * instead of always opening production. The bridge's CORS allow-list already
+ * includes http://localhost:3000 (see src/http/cors.ts).
+ */
+export function appBaseUrl(): string {
+  const override = process.env.SEANPROPAPP_URL?.trim();
+  if (override) return override.replace(/\/+$/, "");
+  return PROD_APP_URL;
+}
 
 /** Generate a 32-byte hex pair token (64 hex chars). */
 export function generatePairToken(): string {
@@ -9,7 +27,7 @@ export function generatePairToken(): string {
 
 /** Build the pair URL with token in the URL fragment (#t=...). */
 export function pairUrl(token: string): string {
-  return `${PAIR_BASE_URL}#t=${token}`;
+  return `${appBaseUrl()}/pair#t=${token}`;
 }
 
 const ESC = String.fromCharCode(0x1b);

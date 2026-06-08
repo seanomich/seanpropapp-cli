@@ -1,6 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import {
   PAIR_BASE_URL,
+  appBaseUrl,
   generatePairToken,
   osc8Link,
   pairUrl,
@@ -24,6 +25,26 @@ describe("pair-url", () => {
     // Fragments are never sent to the server.
     expect(pairUrl(t)).toContain("#t=");
     expect(pairUrl(t)).not.toContain("?t=");
+  });
+
+  describe("SEANPROPAPP_URL override (local testing)", () => {
+    const prev = process.env.SEANPROPAPP_URL;
+    afterEach(() => {
+      if (prev === undefined) delete process.env.SEANPROPAPP_URL;
+      else process.env.SEANPROPAPP_URL = prev;
+    });
+
+    it("defaults to production when unset", () => {
+      delete process.env.SEANPROPAPP_URL;
+      expect(appBaseUrl()).toBe("https://prop.seanoneill.com");
+      expect(pairUrl("abc")).toBe(`${PAIR_BASE_URL}#t=abc`);
+    });
+
+    it("points pair URL at the override (trailing slash trimmed)", () => {
+      process.env.SEANPROPAPP_URL = "http://localhost:3000/";
+      expect(appBaseUrl()).toBe("http://localhost:3000");
+      expect(pairUrl("abc")).toBe("http://localhost:3000/pair#t=abc");
+    });
   });
 
   it("osc8Link includes the URL and label", () => {
