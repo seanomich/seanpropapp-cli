@@ -1,11 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { mapToClaudeCliModel } from "../providers/claude.js";
+import { mapToClaudeCliModel, buildClaudePrompt } from "../providers/claude.js";
 import { createApp } from "../http/server.js";
 import type { Provider, AnthropicSSEEvent } from "../providers/base.js";
 import {
   BRIDGE_TIER_MODELS,
   BRIDGE_MODEL_NAMES,
   SAMPLE_MESSAGES_REQUEST,
+  SAMPLE_RERUN_MESSAGES_REQUEST,
+  RERUN_REQUIRED_PROMPT_SUBSTRINGS,
   SAMPLE_SSE_EVENTS,
   SAMPLE_SSE_TEXT,
 } from "./bridge-contract.fixture.js";
@@ -45,6 +47,13 @@ describe("bridge contract (CLI side)", () => {
       body: JSON.stringify(SAMPLE_MESSAGES_REQUEST),
     });
     expect(res.status).toBe(200);
+  });
+
+  it("conveys every turn of a multi-turn re-run to the CLI prompt (no context loss)", () => {
+    const prompt = buildClaudePrompt(SAMPLE_RERUN_MESSAGES_REQUEST);
+    for (const needle of RERUN_REQUIRED_PROMPT_SUBSTRINGS) {
+      expect(prompt).toContain(needle);
+    }
   });
 
   it("emits SSE the browser parser consumes: the contract event sequence -> the expected text", async () => {

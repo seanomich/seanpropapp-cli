@@ -40,6 +40,44 @@ export const SAMPLE_MESSAGES_REQUEST = {
 } as const;
 
 /**
+ * A canonical MULTI-TURN POST /v1/messages body, as proposition-app produces
+ * for a module RE-RUN with refinement (ChatArea.tsx): the original module
+ * instructions, the previous output (assistant), the user's correction, then a
+ * final "regenerate from the conversation above" instruction.
+ *
+ * Contract: the bridge MUST convey EVERY turn to the underlying CLI, not just
+ * the last user message. Collapsing to the last turn (the beta.6 claude.ts
+ * lastUserText bug) makes the model report "nothing above to regenerate".
+ * See proposition-app#446 / seanpropapp-cli#8.
+ */
+export const SAMPLE_RERUN_MESSAGES_REQUEST = {
+  model: "sonnet",
+  max_tokens: 4096,
+  stream: true,
+  system: "You are a proposition analyst.",
+  messages: [
+    { role: "user", content: "Run the Company Context module for Acme Corp." },
+    { role: "assistant", content: "PRIOR_OUTPUT: Acme is a B2B SaaS company." },
+    { role: "user", content: "Correction: Acme is actually B2B2C." },
+    {
+      role: "user",
+      content:
+        "Now regenerate the full module output from scratch, incorporating ALL of the feedback from our conversation above.",
+    },
+  ],
+} as const;
+
+/**
+ * Substrings the flattened CLI prompt MUST contain for the multi-turn request
+ * above. If any is missing, a turn was dropped and context was lost.
+ */
+export const RERUN_REQUIRED_PROMPT_SUBSTRINGS = [
+  "PRIOR_OUTPUT: Acme is a B2B SaaS company.",
+  "Correction: Acme is actually B2B2C.",
+  "regenerate the full module output",
+] as const;
+
+/**
  * The Anthropic-shape SSE event sequence the bridge emits for a normal
  * completion. The browser's parser (consumeBridgeStream) consumes exactly
  * these event types; new/renamed event shapes must update both sides.
