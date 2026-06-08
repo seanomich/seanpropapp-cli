@@ -27,18 +27,28 @@ function blockPort(port: number): Promise<void> {
 }
 
 describe("port fallback", () => {
-  it("falls back to next port when default is busy", async () => {
-    await blockPort(DEFAULT_BRIDGE_PORT);
-    const r = await startServer({ token: "tok" });
+  it("falls back to the next port when the requested port is busy", async () => {
+    // Use a port the test controls (not the hardcoded default) so a real bridge
+    // running on 17492 during local dev doesn't break this test.
+    const base = 27600;
+    await blockPort(base);
+    const r = await startServer({ token: "tok", port: base });
     running.push(r);
-    expect(r.port).toBeGreaterThan(DEFAULT_BRIDGE_PORT);
-    expect(r.port).toBeLessThanOrEqual(17500);
+    expect(r.port).toBe(base + 1);
   });
 
   it("uses the requested port when free", async () => {
-    // Pick a high port to avoid the default range.
     const r = await startServer({ token: "tok", port: 27492 });
     running.push(r);
     expect(r.port).toBe(27492);
+  });
+
+  it("binds within the default range when no port is requested", async () => {
+    // Covers the default-port branch (startPort === DEFAULT_BRIDGE_PORT). Robust
+    // whether or not 17492 is free: it binds the default or falls back upward.
+    const r = await startServer({ token: "tok" });
+    running.push(r);
+    expect(r.port).toBeGreaterThanOrEqual(DEFAULT_BRIDGE_PORT);
+    expect(r.port).toBeLessThanOrEqual(17500);
   });
 });
