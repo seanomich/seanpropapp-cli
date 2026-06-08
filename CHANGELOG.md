@@ -2,7 +2,7 @@
 
 All notable changes to this CLI are recorded here. The format is loosely Keep a Changelog; we add structure once the release cadence demands it.
 
-## Unreleased
+## 0.1.0-beta.7
 
 ### Fixed
 
