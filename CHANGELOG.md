@@ -2,6 +2,12 @@
 
 All notable changes to this CLI are recorded here. The format is loosely Keep a Changelog; we add structure once the release cadence demands it.
 
+## 0.1.0-beta.6
+
+### Added
+
+- **`SEANPROPAPP_URL` env override to pair against a local dev app.** The connect/pair/sample flows hardcoded `https://prop.seanoneill.com`, so running the CLI on a dev machine always opened production, blocking real end-to-end bridge testing on localhost. `appBaseUrl()` now reads `SEANPROPAPP_URL` (defaults to production, trailing slash trimmed); `pairUrl()` and the sample URL use it. Usage: `SEANPROPAPP_URL=http://localhost:3000 npx @seanpropapp/cli connect`. Production behavior is unchanged when the variable is unset. (#5)
+
 ## 0.1.0-beta.5
 
 ### Fixed
