@@ -36,7 +36,7 @@ describe("pair-url", () => {
 
     it("defaults to production when unset", () => {
       delete process.env.SEANPROPAPP_URL;
-      expect(appBaseUrl()).toBe("https://prop.seanoneill.com");
+      expect(appBaseUrl()).toBe("https://seanpropapp.com");
       expect(pairUrl("abc")).toBe(`${PAIR_BASE_URL}#t=abc`);
     });
 

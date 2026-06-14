@@ -1,6 +1,9 @@
 import { randomBytes } from "node:crypto";
 
-export const PROD_APP_URL = "https://prop.seanoneill.com";
+// Canonical brand domain. New users land on seanpropapp.com, so connect/pair/
+// sample open there. prop.seanoneill.com remains allowlisted in the bridge CORS
+// (src/http/cors.ts) so already-paired sessions on the old domain keep working.
+export const PROD_APP_URL = "https://seanpropapp.com";
 export const PAIR_BASE_URL = `${PROD_APP_URL}/pair`;
 
 /**

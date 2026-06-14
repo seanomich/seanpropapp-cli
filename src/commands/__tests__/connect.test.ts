@@ -57,7 +57,7 @@ describe("connect command", () => {
 
     expect(result.success).toBe(true);
     expect(result.elapsedSeconds).toBeGreaterThanOrEqual(0);
-    expect(result.pairUrl).toMatch(/prop\.seanoneill\.com\/pair#t=/);
+    expect(result.pairUrl).toMatch(/seanpropapp\.com\/pair#t=/);
 
     // Config should now hold the pair token + bridge port + paired_at.
     const cfg = await loadConfig(tmpDir);
