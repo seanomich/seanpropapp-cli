@@ -7,6 +7,7 @@ import type {
   Provider,
 } from "../providers/base.js";
 import { streamingResponseCorsHeaders } from "./cors.js";
+import { logProviderRun } from "./run-log.js";
 import {
   anthropicEventToOpenAIChunk,
   encodeOpenAIChunk,
@@ -102,16 +103,32 @@ export function makeChatCompletionsHandler(deps: ChatCompletionsDeps) {
     const writer = writable.getWriter();
 
     (async () => {
+      const startedAt = Date.now();
+      let providerName = "unknown";
       try {
         // Pick the provider inside the stream so a routing failure (e.g. no CLI
         // installed, #14) surfaces as an error event instead of crashing.
         const provider = await deps.pickProvider(request.model);
+        providerName = provider.name;
         for await (const event of provider.stream(anthropicRequest)) {
           const chunk = anthropicEventToOpenAIChunk(event, ctx);
           if (!chunk) continue;
           await writer.write(encodeOpenAIChunk(chunk));
         }
+        logProviderRun({
+          provider: providerName,
+          model: request.model,
+          durationMs: Date.now() - startedAt,
+          outcome: "ok",
+        });
       } catch (err) {
+        logProviderRun({
+          provider: providerName,
+          model: request.model,
+          durationMs: Date.now() - startedAt,
+          outcome: "error",
+          category: err instanceof ClassifiedError ? err.category : "unknown",
+        });
         const message =
           err instanceof ClassifiedError
             ? err.message

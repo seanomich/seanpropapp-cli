@@ -6,7 +6,11 @@ import { makeAuthMiddleware } from "./auth-middleware.js";
 import { makeHandshakeHandler } from "./handshake.js";
 import { makeMessagesHandler } from "./messages-endpoint.js";
 import { makeChatCompletionsHandler } from "./chat-completions.js";
-import { ClaudeProvider, CodexProvider } from "../providers/index.js";
+import {
+  buildProviders,
+  descriptorForModel,
+  genericOrder,
+} from "../providers/registry.js";
 import { ClassifiedError } from "../providers/base.js";
 import type { Provider } from "../providers/base.js";
 
@@ -21,11 +25,8 @@ export interface StartServerOptions {
    * rotate tokens on SIGHUP without restarting the HTTP listener.
    */
   token: string | (() => string);
-  /** Optional provider overrides for testing. */
-  providers?: {
-    claude?: Provider;
-    codex?: Provider;
-  };
+  /** Optional provider overrides for testing, keyed by registry id (e.g. claude, codex). */
+  providers?: Record<string, Provider>;
   /** Optional override for the paired_at value surfaced in /v1/handshake. */
   pairedAt?: () => string | null;
 }
@@ -41,41 +42,48 @@ export interface RunningServer {
  * via `app.request(...)` without binding to a real socket.
  */
 export function createApp(opts: StartServerOptions) {
-  const claude = opts.providers?.claude ?? new ClaudeProvider();
-  const codex = opts.providers?.codex ?? new CodexProvider();
+  // All providers come from the registry (single source of truth); tests can
+  // override an instance by id via opts.providers.
+  const providers = buildProviders(opts.providers ?? {});
 
-  // Memoized install detection so the generic "subscription" model can route
-  // by what is ACTUALLY installed instead of blind-defaulting to Claude (#14).
-  // Cached for the process lifetime; re-pairing / restarting the bridge
-  // re-detects. detect() failures degrade to "nothing installed" so a flaky
-  // probe never wrongly spawns a missing CLI.
-  let installedCache: Promise<{ claude: boolean; codex: boolean }> | null = null;
-  function detectInstalled(): Promise<{ claude: boolean; codex: boolean }> {
+  // Memoized install detection across the registry so the generic "subscription"
+  // model can route by what is ACTUALLY installed instead of blind-defaulting to
+  // one vendor (#14). Cached for the process lifetime; re-pairing / restarting
+  // the bridge re-detects. detect() failures degrade to "nothing installed" so a
+  // flaky probe never wrongly spawns a missing CLI.
+  let installedCache: Promise<Map<string, boolean>> | null = null;
+  function detectInstalled(): Promise<Map<string, boolean>> {
     if (!installedCache) {
-      installedCache = Promise.all([claude.detect(), codex.detect()])
-        .then(([c, x]) => ({ claude: c.installed, codex: x.installed }))
-        .catch(() => ({ claude: false, codex: false }));
+      installedCache = Promise.all(
+        [...providers.entries()].map(
+          async ([id, p]) => [id, (await p.detect()).installed] as const,
+        ),
+      )
+        .then((entries) => new Map(entries))
+        .catch(() => new Map<string, boolean>());
     }
     return installedCache;
   }
 
   async function pickProviderForModel(model: string): Promise<Provider> {
-    const m = model.toLowerCase();
-    if (m.startsWith("claude-")) return claude;
-    if (m.startsWith("gpt-") || m.startsWith("o3") || m.startsWith("o1")) {
-      return codex;
+    // Explicit model prefix (claude-* / gpt-* / gemini-*) routes directly.
+    const explicit = descriptorForModel(model);
+    if (explicit) {
+      const p = providers.get(explicit.id);
+      if (p) return p;
     }
     // Generic "subscription" pseudo-model — what the SeanPropApp bridge always
-    // sends for a local_bridge run. Route by what is installed. Prefer Claude
-    // when both are present (historical default), but NEVER blind-spawn Claude
-    // for a Codex-only user: that produced "Claude CLI exited with code 1" for
-    // ChatGPT/Codex subscribers (#14). If nothing is installed, surface a
-    // vendor-neutral error instead of crashing into a missing binary.
+    // sends for a local_bridge run. Route by what is installed, in precedence
+    // order (Claude first, historically). NEVER blind-spawn one vendor for a
+    // user who only has another (#14: "Claude CLI exited with code 1" for Codex
+    // users). If nothing is installed, surface a vendor-neutral error.
     const installed = await detectInstalled();
-    if (installed.claude) return claude;
-    if (installed.codex) return codex;
+    for (const d of genericOrder()) {
+      const p = providers.get(d.id);
+      if (p && installed.get(d.id)) return p;
+    }
     throw new ClassifiedError(
-      "No supported CLI detected on this device. Install the Claude CLI or the Codex CLI, then re-pair.",
+      "No supported CLI detected on this device. Install a supported CLI (Claude or Codex), then re-pair.",
       { category: "cli_missing" },
     );
   }
@@ -89,8 +97,7 @@ export function createApp(opts: StartServerOptions) {
     makeAuthMiddleware(opts.token),
     makeHandshakeHandler({
       pairedAt: opts.pairedAt ?? (() => null),
-      claude,
-      codex,
+      providers,
     }),
   );
 

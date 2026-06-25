@@ -4,6 +4,7 @@ import { ClassifiedError } from "../providers/base.js";
 import type { Provider } from "../providers/base.js";
 import { encodeAnthropicSSE } from "./sse.js";
 import { streamingResponseCorsHeaders } from "./cors.js";
+import { logProviderRun } from "./run-log.js";
 
 const MessagesRequestSchema = z.object({
   model: z.string().min(1),
@@ -87,15 +88,31 @@ export function makeMessagesHandler(deps: MessagesDeps) {
 
     // Kick off the pipe in the background; never await it before returning.
     (async () => {
+      const startedAt = Date.now();
+      let providerName = "unknown";
       try {
         // Pick the provider inside the stream so a routing failure (e.g. no CLI
         // installed, #14) surfaces as an SSE error event the browser can read,
         // rather than an unhandled rejection or a crash into a missing binary.
         const provider = await deps.pickProvider(request.model);
+        providerName = provider.name;
         for await (const event of provider.stream(request)) {
           await writer.write(encodeAnthropicSSE(event));
         }
+        logProviderRun({
+          provider: providerName,
+          model: request.model,
+          durationMs: Date.now() - startedAt,
+          outcome: "ok",
+        });
       } catch (err) {
+        logProviderRun({
+          provider: providerName,
+          model: request.model,
+          durationMs: Date.now() - startedAt,
+          outcome: "error",
+          category: err instanceof ClassifiedError ? err.category : "unknown",
+        });
         if (err instanceof ClassifiedError) {
           await writer.write(errorEventBytes(err));
         } else {
