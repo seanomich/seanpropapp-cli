@@ -72,7 +72,7 @@ export async function resolveMcpToken(
     return { token: cfg.mcp_token.trim(), source: "config" };
   }
   throw new Error(
-    "No MCP token found. Generate one at https://prop.seanoneill.com/mcp-setup, " +
+    "No MCP token found. Generate one at https://seanpropapp.com/mcp-setup, " +
       'then either set SEANPROPAPP_MCP_TOKEN or run `seanpropapp pair` and paste the token into ~/.seanpropapp/config.json under "mcp_token".',
   );
 }
@@ -88,7 +88,7 @@ export async function runMcpServer(
   const baseUrl = (
     opts.baseUrl ??
     process.env["SEANPROPAPP_MCP_URL"] ??
-    "https://prop.seanoneill.com"
+    "https://seanpropapp.com"
   ).replace(/\/$/, "");
   const fetchImpl = opts.fetchImpl ?? fetch;
   const stderr = opts.stderr ?? ((s: string) => process.stderr.write(s));

@@ -1,6 +1,6 @@
 # Auto-start on Windows
 
-The bridge has to be running for your browser session at https://prop.seanoneill.com to reach your local Claude / Codex CLI. On Windows the recommended supervisor is Task Scheduler with an "At log on" trigger.
+The bridge has to be running for your browser session at https://seanpropapp.com to reach your local Claude / Codex CLI. On Windows the recommended supervisor is Task Scheduler with an "At log on" trigger.
 
 > **v0.1.0-alpha note.** Full auto-install via Task Scheduler XML is deferred to v1.4.1. For this release, `seanpropapp autostart install` prints the one-line `schtasks` command you need to run yourself. The command below is what it prints.
 

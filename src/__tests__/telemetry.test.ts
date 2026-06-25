@@ -27,7 +27,7 @@ afterEach(async () => {
 
 describe("telemetryUrl", () => {
   it("defaults to the prod endpoint", () => {
-    expect(telemetryUrl()).toBe("https://prop.seanoneill.com/api/telemetry");
+    expect(telemetryUrl()).toBe("https://seanpropapp.com/api/telemetry");
   });
   it("honors SEANPROPAPP_TELEMETRY_URL env", () => {
     process.env["SEANPROPAPP_TELEMETRY_URL"] = "https://example.test/t";
@@ -161,6 +161,6 @@ describe("telemetryStatus", () => {
     const s = await telemetryStatus({ configDir: tmpDir });
     expect(s.enabled).toBe(false);
     expect(s.correlation_id).toBeUndefined();
-    expect(s.url).toBe("https://prop.seanoneill.com/api/telemetry");
+    expect(s.url).toBe("https://seanpropapp.com/api/telemetry");
   });
 });

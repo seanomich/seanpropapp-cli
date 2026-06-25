@@ -1,6 +1,6 @@
 # Auto-start on macOS
 
-The bridge has to be running for your browser session at https://prop.seanoneill.com to reach your local Claude / Codex CLI. The `seanpropapp autostart install` command writes a launchd LaunchAgent so the bridge starts at login and restarts if it crashes.
+The bridge has to be running for your browser session at https://seanpropapp.com to reach your local Claude / Codex CLI. The `seanpropapp autostart install` command writes a launchd LaunchAgent so the bridge starts at login and restarts if it crashes.
 
 ## What the install command runs
 

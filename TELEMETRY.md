@@ -52,7 +52,7 @@ Each event includes:
 
 ## Where it goes
 
-Telemetry events POST to `https://prop.seanoneill.com/api/telemetry`. The receiving table has a 90-day retention; rows older than that are pruned by the daily cron in the proposition-app repo. The schema is documented in the proposition-app `supabase/migrations/` directory.
+Telemetry events POST to `https://seanpropapp.com/api/telemetry`. The receiving table has a 90-day retention; rows older than that are pruned by the daily cron in the proposition-app repo. The schema is documented in the proposition-app `supabase/migrations/` directory.
 
 ## v0.1.0-alpha caveat
 
