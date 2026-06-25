@@ -1,6 +1,10 @@
 import type { MiddlewareHandler } from "hono";
 
 export const ALLOWED_ORIGINS = [
+  // seanpropapp.com is the canonical brand domain (new users land here);
+  // prop.seanoneill.com stays allowlisted for back-compat with already-paired
+  // sessions; localhost:3000 is local dev.
+  "https://seanpropapp.com",
   "https://prop.seanoneill.com",
   "http://localhost:3000",
 ] as const;
@@ -9,7 +13,21 @@ export const PREFLIGHT_MAX_AGE_SECONDS = 86400;
 
 export function isOriginAllowed(origin: string | null | undefined): boolean {
   if (!origin) return false;
-  return (ALLOWED_ORIGINS as readonly string[]).includes(origin);
+  if ((ALLOWED_ORIGINS as readonly string[]).includes(origin)) return true;
+  // Honor the SEANPROPAPP_URL override (preview / local dev) so the CORS allow
+  // list follows the same base URL the connect/pair flow targets. Without this,
+  // overriding SEANPROPAPP_URL repointed the pair URL but the bridge still 403'd
+  // the overridden origin (e.g. a Vercel preview domain). Compare on origin
+  // (scheme://host[:port]) only; ignore any path in the override value.
+  const override = process.env["SEANPROPAPP_URL"]?.trim();
+  if (override) {
+    try {
+      return new URL(override).origin === origin;
+    } catch {
+      return false;
+    }
+  }
+  return false;
 }
 
 /**
@@ -39,7 +57,8 @@ export function streamingResponseCorsHeaders(
 }
 
 /**
- * Strict CORS middleware: only allows the SeanPropApp prod origin + local dev.
+ * Strict CORS middleware: allows the brand domain (seanpropapp.com), the legacy
+ * prop.seanoneill.com origin, localhost dev, and any SEANPROPAPP_URL override.
  * Rejects all other origins with 403. Preflights cached for 24h.
  */
 export const corsMiddleware: MiddlewareHandler = async (c, next) => {

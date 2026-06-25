@@ -37,7 +37,7 @@ export interface TelemetryPayload {
   ts: string;
 }
 
-const DEFAULT_URL = "https://prop.seanoneill.com/api/telemetry";
+const DEFAULT_URL = "https://seanpropapp.com/api/telemetry";
 
 /**
  * Returns the URL the telemetry events POST to, honoring env override.

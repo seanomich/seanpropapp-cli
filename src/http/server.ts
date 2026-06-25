@@ -7,6 +7,7 @@ import { makeHandshakeHandler } from "./handshake.js";
 import { makeMessagesHandler } from "./messages-endpoint.js";
 import { makeChatCompletionsHandler } from "./chat-completions.js";
 import { ClaudeProvider, CodexProvider } from "../providers/index.js";
+import { ClassifiedError } from "../providers/base.js";
 import type { Provider } from "../providers/base.js";
 
 export const DEFAULT_BRIDGE_PORT = 17492;
@@ -43,14 +44,40 @@ export function createApp(opts: StartServerOptions) {
   const claude = opts.providers?.claude ?? new ClaudeProvider();
   const codex = opts.providers?.codex ?? new CodexProvider();
 
-  function pickProviderForModel(model: string): Provider {
+  // Memoized install detection so the generic "subscription" model can route
+  // by what is ACTUALLY installed instead of blind-defaulting to Claude (#14).
+  // Cached for the process lifetime; re-pairing / restarting the bridge
+  // re-detects. detect() failures degrade to "nothing installed" so a flaky
+  // probe never wrongly spawns a missing CLI.
+  let installedCache: Promise<{ claude: boolean; codex: boolean }> | null = null;
+  function detectInstalled(): Promise<{ claude: boolean; codex: boolean }> {
+    if (!installedCache) {
+      installedCache = Promise.all([claude.detect(), codex.detect()])
+        .then(([c, x]) => ({ claude: c.installed, codex: x.installed }))
+        .catch(() => ({ claude: false, codex: false }));
+    }
+    return installedCache;
+  }
+
+  async function pickProviderForModel(model: string): Promise<Provider> {
     const m = model.toLowerCase();
     if (m.startsWith("claude-")) return claude;
     if (m.startsWith("gpt-") || m.startsWith("o3") || m.startsWith("o1")) {
       return codex;
     }
-    // Generic "subscription" pseudo-model: route by what's installed; default to claude.
-    return claude;
+    // Generic "subscription" pseudo-model — what the SeanPropApp bridge always
+    // sends for a local_bridge run. Route by what is installed. Prefer Claude
+    // when both are present (historical default), but NEVER blind-spawn Claude
+    // for a Codex-only user: that produced "Claude CLI exited with code 1" for
+    // ChatGPT/Codex subscribers (#14). If nothing is installed, surface a
+    // vendor-neutral error instead of crashing into a missing binary.
+    const installed = await detectInstalled();
+    if (installed.claude) return claude;
+    if (installed.codex) return codex;
+    throw new ClassifiedError(
+      "No supported CLI detected on this device. Install the Claude CLI or the Codex CLI, then re-pair.",
+      { category: "cli_missing" },
+    );
   }
 
   const app = new Hono();

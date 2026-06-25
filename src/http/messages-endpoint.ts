@@ -32,7 +32,9 @@ const MessagesRequestSchema = z.object({
 export type MessagesRequest = z.infer<typeof MessagesRequestSchema>;
 
 export interface MessagesDeps {
-  pickProvider: (model: string) => Provider;
+  // May be async: routing the generic "subscription" model now awaits CLI
+  // install-detection (#14), so the picker can return a Promise.
+  pickProvider: (model: string) => Provider | Promise<Provider>;
 }
 
 function errorEventBytes(err: ClassifiedError): Uint8Array {
@@ -76,7 +78,6 @@ export function makeMessagesHandler(deps: MessagesDeps) {
     }
 
     const request = parsed.data;
-    const provider = deps.pickProvider(request.model);
 
     // Stream Anthropic-format SSE back to the browser. We set the response
     // headers immediately and then push events through a TransformStream so
@@ -87,6 +88,10 @@ export function makeMessagesHandler(deps: MessagesDeps) {
     // Kick off the pipe in the background; never await it before returning.
     (async () => {
       try {
+        // Pick the provider inside the stream so a routing failure (e.g. no CLI
+        // installed, #14) surfaces as an SSE error event the browser can read,
+        // rather than an unhandled rejection or a crash into a missing binary.
+        const provider = await deps.pickProvider(request.model);
         for await (const event of provider.stream(request)) {
           await writer.write(encodeAnthropicSSE(event));
         }

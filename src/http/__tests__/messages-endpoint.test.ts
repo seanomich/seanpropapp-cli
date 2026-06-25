@@ -122,6 +122,65 @@ describe("/v1/messages", () => {
     expect(text).toContain("boom");
   });
 
+  // #14: the SeanPropApp bridge always sends the generic pseudo-model
+  // "subscription". It must route by what is INSTALLED, never blind-default to
+  // Claude — a Codex/ChatGPT user with no Claude CLI used to get
+  // "Claude CLI exited with code 1".
+  function detectableProvider(
+    name: string,
+    installed: boolean,
+    events: AnthropicSSEEvent[],
+  ): Provider {
+    return {
+      name,
+      detect: async () => ({
+        installed,
+        ...(installed ? { binary: `/bin/${name}`, version: "1" } : { reason: "not found" }),
+      }),
+      async *stream() {
+        for (const e of events) yield e;
+      },
+    };
+  }
+  const sub = (model = "subscription") => ({ ...OK_BODY, model });
+
+  it("REGRESSION (#14): generic 'subscription' routes to Codex when only Codex is installed", async () => {
+    const claude = detectableProvider("claude", false, [
+      { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "FROM_CLAUDE" } },
+      { type: "message_stop" },
+    ]);
+    const codex = detectableProvider("codex", true, [
+      { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "FROM_CODEX" } },
+      { type: "message_stop" },
+    ]);
+    const text = await (await post(appWith(claude, codex), sub())).text();
+    expect(text).toContain("FROM_CODEX");
+    expect(text).not.toContain("FROM_CLAUDE");
+  });
+
+  it("generic 'subscription' prefers Claude when both are installed (no regression)", async () => {
+    const claude = detectableProvider("claude", true, [
+      { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "FROM_CLAUDE" } },
+      { type: "message_stop" },
+    ]);
+    const codex = detectableProvider("codex", true, [
+      { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "FROM_CODEX" } },
+      { type: "message_stop" },
+    ]);
+    const text = await (await post(appWith(claude, codex), sub())).text();
+    expect(text).toContain("FROM_CLAUDE");
+    expect(text).not.toContain("FROM_CODEX");
+  });
+
+  it("REGRESSION (#14): generic 'subscription' with NO CLI installed emits a vendor-neutral error, not a Claude crash", async () => {
+    const claude = detectableProvider("claude", false, []);
+    const codex = detectableProvider("codex", false, []);
+    const text = await (await post(appWith(claude, codex), sub())).text();
+    expect(text).toContain("event: error");
+    expect(text).toContain("No supported CLI detected");
+    expect(text).not.toMatch(/Claude CLI exited/);
+  });
+
   it("routes by model: gpt-* goes to codex, claude-* to claude", async () => {
     const claude = streamingProvider("claude", [
       { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "FROM_CLAUDE" } },

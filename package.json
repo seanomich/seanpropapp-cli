@@ -1,11 +1,11 @@
 {
   "name": "@seanpropapp/cli",
-  "version": "0.1.0-beta.7",
+  "version": "0.1.0-beta.10",
   "description": "Run SeanPropApp proposition analyses on your existing Claude Pro or ChatGPT Plus subscription via a local bridge.",
   "type": "module",
   "license": "MIT",
   "author": "Sean O'Neill",
-  "homepage": "https://prop.seanoneill.com",
+  "homepage": "https://seanpropapp.com",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/seanomich/seanpropapp-cli.git"
@@ -38,7 +38,7 @@
     "@hono/node-server": "^2.0.4",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "commander": "^12.1.0",
-    "hono": "^4.6.0",
+    "hono": "^4.12.27",
     "open": "^10.1.0",
     "zod": "^3.23.8"
   },

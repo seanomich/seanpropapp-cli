@@ -1,6 +1,6 @@
 # @seanpropapp/cli
 
-Run [SeanPropApp](https://prop.seanoneill.com) proposition analyses on your existing Claude Pro or ChatGPT Plus subscription. No API key, no extra cost.
+Run [SeanPropApp](https://seanpropapp.com) proposition analyses on your existing Claude Pro or ChatGPT Plus subscription. No API key, no extra cost.
 
 ## Quick start
 
@@ -40,7 +40,13 @@ Global flags: `--config <path>`, `--quiet`, `--json`, `--verbose`, `--no-telemet
 
 The CLI runs a small HTTP server on `127.0.0.1` (default port `17492`, falling back through `17500`). The SeanPropApp browser workspace sends LLM requests to that local URL, attaching a Bearer pair token that lives only on your machine. The CLI in turn shells out to your installed Claude CLI or Codex CLI, which runs against your subscription.
 
-The bridge accepts requests only from `https://prop.seanoneill.com` (and `http://localhost:3000` for development); every other Origin is rejected with 403.
+The bridge accepts requests only from `https://seanpropapp.com` (the legacy `https://prop.seanoneill.com` stays allowlisted for already-paired browsers, plus `http://localhost:3000` for development); every other Origin is rejected with 403.
+
+## The browser permission prompt
+
+The first time your browser talks to the bridge (when you confirm the device, or run your first analysis), Chrome or Edge may show a prompt like **"seanpropapp.com wants to access other apps and services on this device."** This is the browser's Local Network Access permission, and it is expected: it is asking whether the SeanPropApp page may reach the bridge running locally on `127.0.0.1`. That connection is the entire point of the bridge, so click **Allow**.
+
+It is the only device permission the bridge needs. SeanPropApp does not read your files, scan your network, or reach any other app on your machine; the prompt grants exactly one thing: this browser tab talking to this local bridge. (Firefox and Safari handle local access differently and may not show the prompt; if pairing fails on Safari, see the Safari notes.)
 
 ## Trust signals
 

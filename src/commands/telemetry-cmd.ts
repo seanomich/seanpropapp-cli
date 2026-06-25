@@ -41,7 +41,7 @@ export async function runTelemetryEnable(
   emit(
     out,
     opts.json ?? false,
-    `Telemetry enabled. Events will POST to https://prop.seanoneill.com/api/telemetry. See TELEMETRY.md for details.\nCorrelation id: ${correlationId}`,
+    `Telemetry enabled. Events will POST to https://seanpropapp.com/api/telemetry. See TELEMETRY.md for details.\nCorrelation id: ${correlationId}`,
     {
       ok: true,
       enabled: true,

@@ -17,12 +17,26 @@ function buildApp() {
 }
 
 describe("cors", () => {
-  it("isOriginAllowed allows prod + localhost only", () => {
+  it("isOriginAllowed allows the brand domain, prop, and localhost", () => {
+    expect(isOriginAllowed("https://seanpropapp.com")).toBe(true);
     expect(isOriginAllowed("https://prop.seanoneill.com")).toBe(true);
     expect(isOriginAllowed("http://localhost:3000")).toBe(true);
     expect(isOriginAllowed("https://evil.example.com")).toBe(false);
     expect(isOriginAllowed(null)).toBe(false);
     expect(isOriginAllowed(undefined)).toBe(false);
+  });
+
+  it("isOriginAllowed honors the SEANPROPAPP_URL override origin (preview/dev)", () => {
+    const prev = process.env.SEANPROPAPP_URL;
+    process.env.SEANPROPAPP_URL = "https://proposition-app-git-preview-x.vercel.app";
+    try {
+      expect(isOriginAllowed("https://proposition-app-git-preview-x.vercel.app")).toBe(true);
+      // Only the override's exact origin is allowed, not arbitrary others.
+      expect(isOriginAllowed("https://other.vercel.app")).toBe(false);
+    } finally {
+      if (prev === undefined) delete process.env.SEANPROPAPP_URL;
+      else process.env.SEANPROPAPP_URL = prev;
+    }
   });
 
   it("allows GET with prod origin and echoes Access-Control-Allow-Origin", async () => {
@@ -75,8 +89,9 @@ describe("cors", () => {
     expect(res.status).toBe(200);
   });
 
-  it("ALLOWED_ORIGINS list contains only the two expected entries", () => {
+  it("ALLOWED_ORIGINS list contains the three expected entries", () => {
     expect(ALLOWED_ORIGINS).toEqual([
+      "https://seanpropapp.com",
       "https://prop.seanoneill.com",
       "http://localhost:3000",
     ]);

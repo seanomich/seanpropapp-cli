@@ -1,6 +1,6 @@
 # Auto-start on Linux
 
-The bridge has to be running for your browser session at https://prop.seanoneill.com to reach your local Claude / Codex CLI. `seanpropapp autostart install` writes a per-user systemd unit so the bridge starts at login and restarts if it crashes.
+The bridge has to be running for your browser session at https://seanpropapp.com to reach your local Claude / Codex CLI. `seanpropapp autostart install` writes a per-user systemd unit so the bridge starts at login and restarts if it crashes.
 
 This uses the systemd `--user` instance, so no root is needed.
 
