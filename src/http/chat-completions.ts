@@ -30,7 +30,9 @@ const ChatCompletionsRequestSchema = z.object({
 export type ChatCompletionsRequest = z.infer<typeof ChatCompletionsRequestSchema>;
 
 export interface ChatCompletionsDeps {
-  pickProvider: (model: string) => Provider;
+  // May be async: routing the generic "subscription" model now awaits CLI
+  // install-detection (#14), so the picker can return a Promise.
+  pickProvider: (model: string) => Provider | Promise<Provider>;
 }
 
 /**
@@ -89,7 +91,6 @@ export function makeChatCompletionsHandler(deps: ChatCompletionsDeps) {
 
     const request = parsed.data;
     const anthropicRequest = openaiToAnthropic(request);
-    const provider = deps.pickProvider(request.model);
 
     const ctx = {
       id: `chatcmpl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -102,6 +103,9 @@ export function makeChatCompletionsHandler(deps: ChatCompletionsDeps) {
 
     (async () => {
       try {
+        // Pick the provider inside the stream so a routing failure (e.g. no CLI
+        // installed, #14) surfaces as an error event instead of crashing.
+        const provider = await deps.pickProvider(request.model);
         for await (const event of provider.stream(anthropicRequest)) {
           const chunk = anthropicEventToOpenAIChunk(event, ctx);
           if (!chunk) continue;
