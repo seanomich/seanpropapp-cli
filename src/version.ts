@@ -7,4 +7,4 @@
  * is also pinned by npm install. A drift guard test (src/__tests__/version.test.ts)
  * fails the build if this constant and package.json ever diverge.
  */
-export const CLI_VERSION = "0.1.0-beta.11";
+export const CLI_VERSION = "0.1.0-beta.12";
