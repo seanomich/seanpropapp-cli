@@ -18,68 +18,76 @@ export interface CodexProviderDeps {
 const DEFAULT_BINARY = "codex";
 
 /**
- * OpenAI Chat Completion format used internally before translating back
- * to Anthropic SSE for the bridge's unified output.
+ * Flatten an Anthropic-shape request into a single plain-text prompt for
+ * `codex exec`, which takes one prompt (on stdin here). The common bridge case
+ * is a single user turn, so that is passed verbatim; multi-turn conversations
+ * are role-labeled so prior context survives.
  */
-export interface OpenAIChatMessage {
-  role: "system" | "user" | "assistant";
-  content: string;
-}
+export function buildCodexPrompt(req: AnthropicLikeRequest): string {
+  const flatten = (content: AnthropicLikeRequest["messages"][number]["content"]): string =>
+    typeof content === "string"
+      ? content
+      : content
+          .filter((b) => b.type === "text" && typeof b.text === "string")
+          .map((b) => b.text ?? "")
+          .join("\n");
 
-export interface OpenAIChatRequest {
-  model: string;
-  messages: OpenAIChatMessage[];
-  max_tokens?: number;
-  temperature?: number;
-  stream?: boolean;
+  const parts: string[] = [];
+  if (req.system) parts.push(req.system);
+
+  const onlyOneUserTurn =
+    req.messages.length === 1 && req.messages[0]?.role === "user";
+  for (const m of req.messages) {
+    const content = flatten(m.content);
+    parts.push(onlyOneUserTurn ? content : `${m.role}: ${content}`);
+  }
+  return parts.join("\n\n");
 }
 
 /**
- * Translate Anthropic Messages → OpenAI Chat Completions shape.
- * Exported so tests can verify the translation surface directly.
+ * Args for `codex exec`. We run it non-interactively with JSONL events on
+ * stdout, no git-repo requirement (the bridge runs anywhere), a read-only
+ * sandbox (the bridge generates text, it must never execute model-proposed
+ * shell commands), and no persisted session files.
+ *
+ * We deliberately do NOT pass `-m`: the SeanPropApp bridge sends the generic
+ * `subscription` pseudo-model (and our tier names), none of which are real
+ * Codex models, so we let Codex use the user's configured default. Bridge-driven
+ * model selection is tracked in #16.
  */
-export function anthropicToOpenAI(req: AnthropicLikeRequest): OpenAIChatRequest {
-  const messages: OpenAIChatMessage[] = [];
-  if (req.system) {
-    messages.push({ role: "system", content: req.system });
-  }
-  for (const m of req.messages) {
-    let content: string;
-    if (typeof m.content === "string") {
-      content = m.content;
-    } else {
-      content = m.content
-        .filter((block) => block.type === "text" && typeof block.text === "string")
-        .map((block) => block.text ?? "")
-        .join("\n");
-    }
-    if (m.role === "system") {
-      messages.push({ role: "system", content });
-    } else if (m.role === "assistant") {
-      messages.push({ role: "assistant", content });
-    } else {
-      messages.push({ role: "user", content });
-    }
-  }
-  const result: OpenAIChatRequest = {
-    model: req.model,
-    messages,
-    stream: req.stream,
-  };
-  if (req.max_tokens !== undefined) result.max_tokens = req.max_tokens;
-  if (req.temperature !== undefined) result.temperature = req.temperature;
-  return result;
+export function buildCodexExecArgs(): string[] {
+  return [
+    "exec",
+    "--json",
+    "--skip-git-repo-check",
+    "--sandbox",
+    "read-only",
+    "--ephemeral",
+  ];
 }
 
 const RATE_LIMIT_PATTERNS: RegExp[] = [
   /rate.?limit/i,
-  /429/,
+  /\b429\b/,
   /too many requests/i,
   /quota.?exceeded/i,
+  /usage limit/i,
+];
+
+const AUTH_PATTERNS: RegExp[] = [
+  /not logged in/i,
+  /codex login/i,
+  /unauthorized/i,
+  /\b401\b/,
+  /authentication/i,
 ];
 
 export function detectRateLimit(text: string): boolean {
   return RATE_LIMIT_PATTERNS.some((re) => re.test(text));
+}
+
+export function detectAuthError(text: string): boolean {
+  return AUTH_PATTERNS.some((re) => re.test(text));
 }
 
 export function parseRetryAfter(text: string): number | undefined {
@@ -88,6 +96,32 @@ export function parseRetryAfter(text: string): number | undefined {
   if (m && m[1]) {
     const n = Number(m[1]);
     if (Number.isFinite(n) && n >= 0) return n;
+  }
+  return undefined;
+}
+
+/**
+ * Extract the assistant text from one parsed `codex exec --json` JSONL event,
+ * or null if the event carries no user-visible message. Codex emits, in order:
+ *   {type:"thread.started"} {type:"turn.started"}
+ *   {type:"item.completed", item:{type:"agent_message", text:"..."}}
+ *   {type:"turn.completed", usage:{output_tokens, ...}}
+ * Only `agent_message` items are surfaced; reasoning / command items are ignored.
+ */
+export function agentTextFromEvent(evt: unknown): string | null {
+  if (!evt || typeof evt !== "object") return null;
+  const e = evt as { type?: string; item?: { type?: string; text?: string } };
+  if (e.type === "item.completed" && e.item?.type === "agent_message") {
+    return typeof e.item.text === "string" ? e.item.text : null;
+  }
+  return null;
+}
+
+function outputTokensFromEvent(evt: unknown): number | undefined {
+  if (!evt || typeof evt !== "object") return undefined;
+  const e = evt as { type?: string; usage?: { output_tokens?: number } };
+  if (e.type === "turn.completed" && typeof e.usage?.output_tokens === "number") {
+    return e.usage.output_tokens;
   }
   return undefined;
 }
@@ -112,7 +146,6 @@ export class CodexProvider implements Provider {
     if (!binary) {
       return { installed: false, reason: "codex binary not found in PATH" };
     }
-    // Codex CLI's version flag varies; try common shapes and fall back to "present".
     const versionRun = await this.deps.runCaptureFn(binary, ["--version"], {
       timeoutMs: 5000,
     });
@@ -133,18 +166,8 @@ export class CodexProvider implements Provider {
       });
     }
 
-    // Translate inbound Anthropic-shape into OpenAI-shape (consumed via stdin
-    // JSON so the spawned Codex CLI receives a self-describing payload).
-    const openaiReq = anthropicToOpenAI(request);
-    const stdinPayload = JSON.stringify(openaiReq);
-
-    // Codex CLI invocation: use --json-input so the CLI reads the OpenAI
-    // chat completions payload from stdin and streams plain text to stdout.
-    // The flag set here is the canonical contract we ship against; if Codex
-    // ships a different shape we adapt the args, not the wire format.
-    const args = ["--json-input", "--model", request.model];
-
-    const child = this.deps.spawnFn(detected.binary, args, {
+    const prompt = buildCodexPrompt(request);
+    const child = this.deps.spawnFn(detected.binary, buildCodexExecArgs(), {
       stdio: ["pipe", "pipe", "pipe"],
     });
 
@@ -158,8 +181,9 @@ export class CodexProvider implements Provider {
     };
     signal?.addEventListener("abort", abortHandler);
 
+    // `codex exec` reads the prompt from stdin when none is given as an arg.
     if (child.stdin) {
-      child.stdin.end(stdinPayload);
+      child.stdin.end(prompt);
     }
 
     const messageId = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -170,42 +194,70 @@ export class CodexProvider implements Provider {
       content_block: { type: "text", text: "" },
     };
 
+    let outputTokens = 0;
+    let rawForClassify = "";
+
     try {
-      let totalOut = "";
-      if (child.stdout) {
-        for await (const chunk of child.stdout as AsyncIterable<Buffer | string>) {
-          const text = typeof chunk === "string" ? chunk : chunk.toString();
-          if (text.length === 0) continue;
-          totalOut += text;
-          if (detectRateLimit(text)) {
-            const retryAfter = parseRetryAfter(text);
-            throw new ClassifiedError("Subscription rate limit", {
-              category: "subscription_limit",
-              retryAfterSeconds: retryAfter,
-              provider: this.name,
-            });
-          }
+      // Parse JSONL: accumulate stdout, emit on each complete line.
+      let buffer = "";
+      const handleLine = function* (
+        line: string,
+      ): Generator<AnthropicSSEEvent> {
+        const trimmed = line.trim();
+        if (!trimmed) return;
+        rawForClassify += trimmed + "\n";
+        let evt: unknown;
+        try {
+          evt = JSON.parse(trimmed);
+        } catch {
+          return; // not a JSON line (banner / partial); ignore
+        }
+        const text = agentTextFromEvent(evt);
+        if (text) {
           yield {
             type: "content_block_delta",
             index: 0,
             delta: { type: "text_delta", text },
           };
         }
+        const toks = outputTokensFromEvent(evt);
+        if (toks !== undefined) outputTokens = toks;
+      };
+
+      if (child.stdout) {
+        for await (const chunk of child.stdout as AsyncIterable<Buffer | string>) {
+          buffer += typeof chunk === "string" ? chunk : chunk.toString();
+          let nl: number;
+          while ((nl = buffer.indexOf("\n")) >= 0) {
+            const line = buffer.slice(0, nl);
+            buffer = buffer.slice(nl + 1);
+            yield* handleLine(line);
+          }
+        }
       }
+      // Flush any trailing partial line.
+      if (buffer.length > 0) yield* handleLine(buffer);
 
       const exitCode = await new Promise<number | null>((resolve) => {
         if (child.exitCode !== null) return resolve(child.exitCode);
         child.once("close", (code) => resolve(code));
       });
       const stderr = stderrChunks.join("");
+      const haystack = stderr + "\n" + rawForClassify;
+
       if (exitCode !== 0) {
-        if (detectRateLimit(stderr) || detectRateLimit(totalOut)) {
-          const retryAfter = parseRetryAfter(stderr) ?? parseRetryAfter(totalOut);
-          throw new ClassifiedError("Subscription rate limit", {
+        if (detectRateLimit(haystack)) {
+          throw new ClassifiedError("Codex subscription rate limit reached", {
             category: "subscription_limit",
-            retryAfterSeconds: retryAfter,
+            retryAfterSeconds: parseRetryAfter(haystack),
             provider: this.name,
           });
+        }
+        if (detectAuthError(haystack)) {
+          throw new ClassifiedError(
+            "Codex CLI is not logged in. Run `codex login`, then retry.",
+            { category: "auth_required", provider: this.name },
+          );
         }
         throw new ClassifiedError(
           `Codex CLI exited with code ${exitCode}: ${stderr.slice(0, 500)}`,
@@ -213,11 +265,20 @@ export class CodexProvider implements Provider {
         );
       }
 
+      // Even on a 0 exit, the CLI can report a soft rate-limit in its output.
+      if (detectRateLimit(rawForClassify)) {
+        throw new ClassifiedError("Codex subscription rate limit reached", {
+          category: "subscription_limit",
+          retryAfterSeconds: parseRetryAfter(rawForClassify),
+          provider: this.name,
+        });
+      }
+
       yield { type: "content_block_stop", index: 0 };
       yield {
         type: "message_delta",
         delta: { stop_reason: "end_turn" },
-        usage: { output_tokens: 0 },
+        usage: { output_tokens: outputTokens },
       };
       yield { type: "message_stop" };
     } finally {
