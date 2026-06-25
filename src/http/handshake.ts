@@ -5,11 +5,8 @@ import type { Provider, ProviderDetectResult } from "../providers/base.js";
 
 export interface HandshakeResponse {
   version: string;
-  providers: {
-    claude: ProviderDetectResult;
-    codex: ProviderDetectResult;
-    gemini: ProviderDetectResult;
-  };
+  /** Detection result per registry provider id (claude, codex, gemini, ...). */
+  providers: Record<string, ProviderDetectResult>;
   paired_at: string | null;
   device_name: string;
 }
@@ -23,23 +20,20 @@ export function deviceName(): string {
 
 export interface HandshakeDeps {
   pairedAt: () => string | null;
-  claude: Provider;
-  codex: Provider;
+  /** Registry providers keyed by id; every one is detected and reported. */
+  providers: Map<string, Provider>;
 }
 
 export function makeHandshakeHandler(deps: HandshakeDeps) {
   return async (c: Context) => {
-    const [claude, codex] = await Promise.all([
-      deps.claude.detect(),
-      deps.codex.detect(),
-    ]);
+    const entries = await Promise.all(
+      [...deps.providers.entries()].map(
+        async ([id, p]) => [id, await p.detect()] as const,
+      ),
+    );
     const body: HandshakeResponse = {
       version: CLI_VERSION,
-      providers: {
-        claude,
-        codex,
-        gemini: { installed: false, reason: "not yet supported" },
-      },
+      providers: Object.fromEntries(entries),
       paired_at: deps.pairedAt(),
       device_name: deviceName(),
     };
