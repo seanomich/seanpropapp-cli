@@ -47,7 +47,33 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Publish
-        run: npm publish --provenance --access public
+      - name: Publish with provenance (idempotent + verified)
+        run: |
+          version="${GITHUB_REF#refs/tags/v}"
+          set +e
+          npm publish --provenance --access public
+          pub_exit=$?
+          set -e
+          # Do NOT trust the publish exit code alone. npm can return E403
+          # "cannot publish over previously published version" from an internal
+          # registry-PUT retry AFTER it has already signed + logged the
+          # provenance and uploaded the tarball (this is exactly what made the
+          # v0.1.0-beta.11 run go red while the package WAS published with
+          # provenance). Conversely, a green publish that somehow lacks an
+          # attestation would be a real, silent trust regression. So the source
+          # of truth is the registry: verify the version is live WITH a
+          # provenance attestation, and only then call it a success.
+          pred=""
+          for _ in 1 2 3 4 5 6; do
+            pred=$(npm view "@seanpropapp/cli@${version}" dist.attestations.provenance.predicateType 2>/dev/null || true)
+            [ -n "$pred" ] && break
+            sleep 5
+          done
+          if [ -n "$pred" ]; then
+            echo "::notice::${version} is published WITH provenance (${pred}); npm publish exit was ${pub_exit}."
+            exit 0
+          fi
+          echo "::error::${version} has NO provenance attestation on npm (npm publish exit ${pub_exit}). Failing the release." >&2
+          exit 1
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
