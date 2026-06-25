@@ -42,6 +42,12 @@ The CLI runs a small HTTP server on `127.0.0.1` (default port `17492`, falling b
 
 The bridge accepts requests only from `https://seanpropapp.com` (the legacy `https://prop.seanoneill.com` stays allowlisted for already-paired browsers, plus `http://localhost:3000` for development); every other Origin is rejected with 403.
 
+## The browser permission prompt
+
+The first time your browser talks to the bridge (when you confirm the device, or run your first analysis), Chrome or Edge may show a prompt like **"seanpropapp.com wants to access other apps and services on this device."** This is the browser's Local Network Access permission, and it is expected: it is asking whether the SeanPropApp page may reach the bridge running locally on `127.0.0.1`. That connection is the entire point of the bridge, so click **Allow**.
+
+It is the only device permission the bridge needs. SeanPropApp does not read your files, scan your network, or reach any other app on your machine; the prompt grants exactly one thing: this browser tab talking to this local bridge. (Firefox and Safari handle local access differently and may not show the prompt; if pairing fails on Safari, see the Safari notes.)
+
 ## Trust signals
 
 - **Source code:** 100% in this repository. Review the bridge HTTP server, providers, and command code before installing.
