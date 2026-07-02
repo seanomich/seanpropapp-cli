@@ -72,6 +72,33 @@ describe("connect command", () => {
     expect(out).toContain("Or paste in browser:");
   });
 
+  it("pair timeout: prints Safari/WebKit guidance and exits with pair_timeout", async () => {
+    const port = 28692 + Math.floor(Math.random() * 100);
+    const result = await runConnect({
+      configDir: tmpDir,
+      port,
+      noBridgeFork: false,
+      skipInstallPrompt: true,
+      skipBrowserOpen: true,
+      skipBridgeHealthcheck: true,
+      // No fakePairedAt: run the real poll loop, but time out fast via the seam.
+      pairTimeoutMs: 50,
+      providers: {
+        claude: fakeProvider("claude", true),
+        codex: fakeProvider("codex", false),
+      },
+      stdout: (s) => stdout.push(s),
+      stderr: (s) => stderr.push(s),
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.reason).toBe("pair_timeout");
+
+    const errOut = stderr.join("");
+    expect(errOut).toMatch(/Safari/);
+    expect(errOut).toMatch(/Chrome, Edge, or Firefox/);
+  });
+
   it("missing Claude CLI + skipInstallPrompt + manual fallback exits non-success", async () => {
     const result = await runConnect({
       configDir: tmpDir,

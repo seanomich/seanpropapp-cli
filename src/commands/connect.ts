@@ -47,6 +47,12 @@ export interface ConnectOptions {
    * immediately at this timestamp.
    */
   fakePairedAt?: string;
+  /**
+   * Test seam: override the pairing-wait timeout (ms). Production uses
+   * HANDSHAKE_TIMEOUT_MS (60s); tests pass a short value to exercise the
+   * timeout-guidance output without waiting a real minute.
+   */
+  pairTimeoutMs?: number;
   /** When true, suppress telemetry emit for this run (--no-telemetry). */
   noTelemetry?: boolean;
   /**
@@ -238,7 +244,7 @@ export async function runConnect(
     await updateConfig({ paired_at: opts.fakePairedAt }, opts.configDir);
     paired = true;
   } else {
-    const deadline = Date.now() + HANDSHAKE_TIMEOUT_MS;
+    const deadline = Date.now() + (opts.pairTimeoutMs ?? HANDSHAKE_TIMEOUT_MS);
     while (Date.now() < deadline) {
       const cfg = await loadConfig(opts.configDir);
       if (cfg.paired_at) {
@@ -253,7 +259,10 @@ export async function runConnect(
     if (stopInlineBridge) await stopInlineBridge();
     err(
       "\n  Timed out waiting for pairing (60s).\n" +
-        "  Either re-run `seanpropapp connect` or click the pair URL again.\n",
+        "  Safari and all iPhone/iPad browsers cannot complete pairing (a WebKit\n" +
+        "  limitation, not a SeanPropApp bug). If you opened the pair link in Safari,\n" +
+        "  copy the Pair URL above and open it in Chrome, Edge, or Firefox instead.\n" +
+        "  Otherwise, re-run `seanpropapp connect` or click the pair URL again.\n",
     );
     return {
       success: false,
