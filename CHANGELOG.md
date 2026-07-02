@@ -2,6 +2,12 @@
 
 All notable changes to this CLI are recorded here. The format is loosely Keep a Changelog; we add structure once the release cadence demands it.
 
+## 0.1.0-beta.13
+
+### Fixed
+
+- **Pairing timeout gave no hint that Safari and iOS browsers cannot complete the handshake.** Safari (macOS) and every iPhone/iPad browser are WebKit, which blocks an HTTPS page from fetching `http://127.0.0.1` loopback as mixed content (WebKit bug 171934), so the CLI-bridge pairing handshake can never finish there. The old timeout message only said "Timed out waiting for pairing (60s)" and pointed the user back at the same broken path. The timeout output now explains this is a WebKit limitation (not a SeanPropApp bug) and tells the user to open the Pair URL in Chrome, Edge, or Firefox instead. A `pairTimeoutMs` test seam lets the timeout path be exercised without a real 60s wait. (proposition-app#440)
+
 ## 0.1.0-beta.7
 
 ### Fixed
