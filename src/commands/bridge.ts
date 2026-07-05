@@ -4,6 +4,7 @@ import path from "node:path";
 import { startServer } from "../http/server.js";
 import { generatePairToken } from "./pair-url.js";
 import { loadConfig, updateConfig, getConfigPath } from "../config.js";
+import { writeBridgePid, removeBridgePid } from "./bridge-pid.js";
 
 const HEALTHCHECK_TIMEOUT_MS = 3_000;
 const HEALTHCHECK_POLL_MS = 100;
@@ -35,11 +36,39 @@ export async function runBridgeForeground(
     (opts.reuseToken && cfg.pair_token ? cfg.pair_token : generatePairToken());
   let currentPairedAt = cfg.paired_at ?? null;
 
+  // Latch so paired_at is written once per pairing epoch (#3). A new epoch
+  // starts when the token rotates via SIGHUP (see reloadOnSighup), so a re-pair
+  // against the same running bridge re-arms the write with a fresh timestamp.
+  let pairRecorded = false;
+  const recordPairedAt = async () => {
+    if (pairRecorded) return;
+    pairRecorded = true;
+    const now = new Date().toISOString();
+    currentPairedAt = now;
+    try {
+      await updateConfig({ paired_at: now }, opts.configDir);
+    } catch (err) {
+      // Best-effort: connect falls back to its poll timeout if this never lands.
+      process.stderr.write(
+        `Failed to record paired_at: ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+    }
+  };
+
   const running = await startServer({
     token: () => currentToken,
     port: opts.port,
     pairedAt: () => currentPairedAt,
+    onBrowserPair: recordPairedAt,
   });
+
+  // Record our PID so `connect` can detect + reset this bridge instead of
+  // spawning a duplicate on the next free port (#1).
+  try {
+    await writeBridgePid(process.pid, opts.configDir);
+  } catch {
+    // Non-fatal: without the pid file connect just falls back to a fresh spawn.
+  }
 
   await updateConfig(
     {
@@ -60,6 +89,9 @@ export async function runBridgeForeground(
       const next = await loadConfig(opts.configDir);
       if (next.pair_token && next.pair_token !== currentToken) {
         currentToken = next.pair_token;
+        // New token means a new pairing epoch: re-arm paired_at so the next
+        // browser confirmation records a fresh timestamp (#1 reuse + #3).
+        pairRecorded = false;
         process.stdout.write("SIGHUP: reloaded pair token from config.\n");
       } else {
         process.stdout.write(
@@ -81,6 +113,7 @@ export async function runBridgeForeground(
   await new Promise<void>((resolve) => {
     const shutdown = async () => {
       process.off("SIGHUP", reloadOnSighup);
+      await removeBridgePid(opts.configDir);
       await running.close();
       resolve();
     };

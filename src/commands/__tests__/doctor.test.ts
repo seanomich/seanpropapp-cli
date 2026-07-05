@@ -4,6 +4,7 @@ import path from "node:path";
 import os from "node:os";
 import { runDoctor, probePortAvailable } from "../doctor.js";
 import { saveConfig } from "../../config.js";
+import { writeBridgePid } from "../bridge-pid.js";
 
 let tmpDir: string;
 
@@ -121,6 +122,74 @@ describe("runDoctor", () => {
     const healthLines = res.sections["Bridge health"]?.join("\n") ?? "";
     expect(healthLines).toMatch(/401/);
     expect(healthLines).toMatch(/Re-pair/);
+  });
+
+  it("reports a running bridge PID + age when a live pid file exists (#1)", async () => {
+    await writeBridgePid(process.pid, tmpDir);
+    const captured: string[] = [];
+    const res = await runDoctor({
+      configDir: tmpDir,
+      stdout: (s) => captured.push(s),
+      detectFn: async () => ({
+        claude: { installed: true, binary: "x", version: "1.0.0" },
+        codex: { installed: false, reason: "n/a" },
+        gemini: { installed: false, reason: "n/a" },
+      }),
+      probePortFn: async () => true,
+      fetchImpl: (async () =>
+        new Response("ok", { status: 200 })) as unknown as typeof fetch,
+    });
+    const proc = res.sections["Bridge process"]?.join("\n") ?? "";
+    expect(proc).toMatch(new RegExp(`Running bridge PID ${process.pid}`));
+  });
+
+  it("reports a stale bridge PID when the recorded process is gone (#1)", async () => {
+    await writeBridgePid(2_000_000_000, tmpDir);
+    const res = await runDoctor({
+      configDir: tmpDir,
+      stdout: () => {},
+      detectFn: async () => ({
+        claude: { installed: true, binary: "x", version: "1.0.0" },
+        codex: { installed: false, reason: "n/a" },
+        gemini: { installed: false, reason: "n/a" },
+      }),
+      probePortFn: async () => true,
+      fetchImpl: (async () =>
+        new Response("ok", { status: 200 })) as unknown as typeof fetch,
+    });
+    const proc = res.sections["Bridge process"]?.join("\n") ?? "";
+    expect(proc).toMatch(/Stale PID/);
+  });
+
+  it("surfaces the bridge's own provider detection from the handshake body (#2)", async () => {
+    await saveConfig(
+      { pair_token: "tok", bridge_url: "http://127.0.0.1:17492" },
+      tmpDir,
+    );
+    const res = await runDoctor({
+      configDir: tmpDir,
+      stdout: () => {},
+      detectFn: async () => ({
+        claude: { installed: true, binary: "x", version: "1.0.0" },
+        codex: { installed: false, reason: "n/a" },
+        gemini: { installed: false, reason: "n/a" },
+      }),
+      probePortFn: async () => true,
+      fetchImpl: (async () =>
+        new Response(
+          JSON.stringify({
+            providers: {
+              claude: { installed: true },
+              codex: { installed: false },
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        )) as unknown as typeof fetch,
+    });
+    const health = res.sections["Bridge health"]?.join("\n") ?? "";
+    expect(health).toMatch(/Bridge reports providers:/);
+    expect(health).toMatch(/claude=detected/);
+    expect(health).toMatch(/codex=not detected/);
   });
 
   it("flags missing Claude CLI as not ok", async () => {
