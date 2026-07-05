@@ -29,6 +29,11 @@ export interface StartServerOptions {
   providers?: Record<string, Provider>;
   /** Optional override for the paired_at value surfaced in /v1/handshake. */
   pairedAt?: () => string | null;
+  /**
+   * Invoked when a browser-originated handshake authenticates (#3). Wired by
+   * the bridge to persist paired_at so `connect` can detect a successful pair.
+   */
+  onBrowserPair?: () => void | Promise<void>;
 }
 
 export interface RunningServer {
@@ -98,6 +103,7 @@ export function createApp(opts: StartServerOptions) {
     makeHandshakeHandler({
       pairedAt: opts.pairedAt ?? (() => null),
       providers,
+      ...(opts.onBrowserPair ? { onBrowserPair: opts.onBrowserPair } : {}),
     }),
   );
 

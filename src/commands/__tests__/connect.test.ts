@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { runConnect } from "../connect.js";
-import { loadConfig } from "../../config.js";
+import { loadConfig, saveConfig } from "../../config.js";
 import type { Provider } from "../../providers/base.js";
 
 let tmpDir: string;
@@ -70,6 +70,35 @@ describe("connect command", () => {
     expect(out).toMatch(/Connected in [\d.]+s/);
     expect(out).toContain("workspace?sample=true");
     expect(out).toContain("Or paste in browser:");
+  });
+
+  it("ignores a STALE paired_at from a prior session and times out with non-misleading copy (#3)", async () => {
+    // A previous session left paired_at in config. A new connect must NOT treat
+    // it as this run's pairing, and the timeout copy must not tell the user to
+    // re-run connect (which would spawn a duplicate bridge, #1).
+    await saveConfig({ paired_at: "2020-01-01T00:00:00Z" }, tmpDir);
+    const port = 28692 + Math.floor(Math.random() * 100);
+    const result = await runConnect({
+      configDir: tmpDir,
+      port,
+      skipInstallPrompt: true,
+      skipBrowserOpen: true,
+      skipBridgeHealthcheck: true,
+      handshakeTimeoutMs: 40,
+      handshakePollMs: 10,
+      providers: {
+        claude: fakeProvider("claude", true),
+        codex: fakeProvider("codex", false),
+      },
+      stdout: (s) => stdout.push(s),
+      stderr: (s) => stderr.push(s),
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.reason).toBe("pair_timeout");
+    const errOut = stderr.join("");
+    expect(errOut).toMatch(/doctor/);
+    expect(errOut).not.toMatch(/re-run/i);
   });
 
   it("missing Claude CLI + skipInstallPrompt + manual fallback exits non-success", async () => {
