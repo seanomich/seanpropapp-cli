@@ -49,6 +49,10 @@ function claudeWith(stdoutChunks: string[], exitCode = 0, stderrChunks: string[]
 const REQ = { model: "opus", messages: [{ role: "user" as const, content: "analyze" }] };
 
 describe("claude: an analysis that DISCUSSES limits must still complete", () => {
+  // For the Claude provider the guarantee is now absolute rather than
+  // positional: the content stream is NEVER inspected, because `claude --print`
+  // ships the whole answer in one chunk and "before any content" is therefore
+  // vacuous. Only a non-zero exit can produce a limit classification.
   it("does not abort a run whose prose mentions competitor rate limits", async () => {
     // Verbatim shape of the module that broke in production.
     const analysis =
@@ -78,20 +82,22 @@ describe("claude: an analysis that DISCUSSES limits must still complete", () => 
   });
 });
 
-describe("claude: a genuine refusal is still caught", () => {
-  it("classifies a limit notice that arrives INSTEAD of content", async () => {
-    // No content precedes it, which is what a real refusal looks like.
+describe("claude: a genuine refusal is still caught, via the exit code", () => {
+  it("classifies a limit notice the CLI reports on stdout with a non-zero exit", async () => {
+    // This is what a real refusal looks like for THIS CLI. Measured: a failing
+    // `claude --print` writes its explanation to STDOUT and exits 1, with stderr
+    // EMPTY. So stdout has to stay readable as evidence; the exit code is what
+    // makes reading it safe.
     const { error } = await collect(
-      claudeWith(["Usage limit reached. Your limits will reset at 04:00 UTC.\n"]).stream(REQ),
+      claudeWith(["Usage limit reached. Your limits will reset at 04:00 UTC.\n"], 1).stream(REQ),
     );
 
     expect(error).toBeDefined();
     expect(error!.category).toBe("subscription_limit");
+    expect(error!.message).toContain("Usage limit reached");
   });
 
-  it("trusts stderr even when the run produced output", async () => {
-    // stderr never carries analysis prose, so it stays fully trusted. Without
-    // this the tightening would cost us real detections on mid-run terminations.
+  it("still classifies when the CLI does use stderr", async () => {
     const { error } = await collect(
       claudeWith(
         ["Partial analysis of the landscape"],
@@ -102,6 +108,32 @@ describe("claude: a genuine refusal is still caught", () => {
 
     expect(error).toBeDefined();
     expect(error!.category).toBe("subscription_limit");
+  });
+
+  it("a non-rate-limit failure keeps its own category and carries stdout", async () => {
+    // The bad---model case, measured: explanation on stdout, stderr empty. A
+    // stderr-only message would have been blank and useless.
+    const { error } = await collect(
+      claudeWith(["There is an issue with the selected model (nope-xyz)."], 1).stream(REQ),
+    );
+
+    expect(error).toBeDefined();
+    expect(error!.category).toBe("cli_crashed");
+    expect(error!.message).toContain("nope-xyz");
+  });
+
+  it("a limit notice on a ZERO exit is passed through, not guessed at", async () => {
+    // Deliberate consequence of making the exit code the only trigger. If the
+    // CLI ever returned a limit notice while claiming success, we stream it and
+    // let the app's short_output guard catch it (ChatArea.tsx: output under 10%
+    // of the module's expected length renders a Provider Error Block with the
+    // body verbatim, and auto-retries). Showing the user what the provider
+    // actually said beats our regex guessing at a category.
+    const notice = "Usage limit reached. Your limits will reset at 04:00 UTC.\n";
+    const { events, error } = await collect(claudeWith([notice], 0).stream(REQ));
+
+    expect(error).toBeUndefined();
+    expect(textOf(events)).toBe(notice);
   });
 });
 

@@ -235,11 +235,15 @@ export class CodexProvider implements Provider {
 
       if (exitCode !== 0) {
         if (detectRateLimit(limitHaystack)) {
-          throw new ClassifiedError("Codex subscription rate limit reached", {
-            category: "subscription_limit",
-            retryAfterSeconds: parseRetryAfter(limitHaystack),
-            provider: this.name,
-          });
+          throw new ClassifiedError(
+            // Include what the CLI actually said, so an incident leaves evidence.
+            `Codex subscription rate limit reached (exit ${exitCode}): ${limitHaystack.trim().slice(0, 300)}`,
+            {
+              category: "subscription_limit",
+              retryAfterSeconds: parseRetryAfter(limitHaystack),
+              provider: this.name,
+            },
+          );
         }
         if (detectAuthError(haystack)) {
           throw new ClassifiedError(
@@ -253,10 +257,13 @@ export class CodexProvider implements Provider {
         );
       }
 
-      // Even on a 0 exit, the CLI can report a soft rate-limit INSTEAD of doing
-      // the work. But a run that produced real output succeeded, and its prose
-      // must never be reinterpreted as a refusal: that turned finished analyses
-      // into fake "subscription rate limit" failures (2026-07-25 incident).
+      // A zero exit means the CLI reported success. Only a run that produced NO
+      // agent output at all can still be a refusal dressed as success; once real
+      // output exists, its prose must never be reinterpreted as a refusal. That
+      // reinterpretation turned finished analyses into fake "subscription rate
+      // limit" failures (2026-07-25). Unlike the Claude provider, codex emits
+      // structured JSONL, so emittedChars genuinely tracks agent text here and
+      // this gate is meaningful rather than vacuous.
       if (emittedChars === 0 && detectRateLimit(rawForClassify)) {
         throw new ClassifiedError("Codex subscription rate limit reached", {
           category: "subscription_limit",

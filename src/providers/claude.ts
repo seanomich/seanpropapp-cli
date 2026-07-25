@@ -186,27 +186,18 @@ export class ClaudeProvider implements Provider {
 
     try {
       let totalOut = "";
-      // Mitigation 2 (see rate-limit-detect.ts): a limit notice REPLACES the
-      // answer, so only generated content produced before any real output can
-      // be a refusal. Once we have streamed prose, its wording is the model
-      // talking about rate limits, not the CLI hitting one.
-      let emittedChars = 0;
+      // NO rate-limit inspection of the content stream. `claude --print` is not
+      // incremental: it emits the ENTIRE answer as a single stdout chunk (proven
+      // by measurement, 1 chunk). So any "only look before real content arrives"
+      // guard is vacuous here, and pattern-matching this chunk means grading the
+      // model's own prose. That is what killed two production runs on the
+      // Competitive Landscape module. Classification happens ONLY after a
+      // non-zero exit, below.
       if (child.stdout) {
         for await (const chunk of child.stdout as AsyncIterable<Buffer | string>) {
           const text = typeof chunk === "string" ? chunk : chunk.toString();
           if (text.length === 0) continue;
           totalOut += text;
-          // Some CLIs write the refusal to stdout rather than stderr, so this
-          // check stays, but ONLY before we have emitted content.
-          if (emittedChars === 0 && detectRateLimit(text)) {
-            const retryAfter = parseRetryAfter(text);
-            throw new ClassifiedError("Subscription rate limit", {
-              category: "subscription_limit",
-              retryAfterSeconds: retryAfter,
-              provider: this.name,
-            });
-          }
-          emittedChars += text.length;
           yield {
             type: "content_block_delta",
             index: 0,
@@ -222,20 +213,32 @@ export class ClaudeProvider implements Provider {
 
       const stderr = stderrChunks.join("");
       if (exitCode !== 0) {
-        // stderr is always safe to scan (analysis prose never goes there).
-        // totalOut only counts when the run produced no real output.
-        const contentIsScannable = emittedChars === 0;
-        if (detectRateLimit(stderr) || (contentIsScannable && detectRateLimit(totalOut))) {
-          const retryAfter =
-            parseRetryAfter(stderr) ?? (contentIsScannable ? parseRetryAfter(totalOut) : undefined);
-          throw new ClassifiedError("Subscription rate limit", {
-            category: "subscription_limit",
-            retryAfterSeconds: retryAfter,
-            provider: this.name,
-          });
+        // The exit code is the ONLY trigger. Measured behaviour: the Claude CLI
+        // reports failures on STDOUT with exit=1 and leaves stderr EMPTY (a bad
+        // --model prints the explanation to stdout, stderr ""). So scanning
+        // stderr alone would detect nothing real, and scanning stdout is only
+        // safe once the CLI has already told us the run failed. A false positive
+        // here can only mislabel an already-failed run; it can no longer destroy
+        // a successful one.
+        const evidence = [stderr, totalOut].filter(Boolean).join("\n").trim();
+        if (detectRateLimit(evidence)) {
+          throw new ClassifiedError(
+            // Carry what the provider ACTUALLY said. The old message was the
+            // bare string "Subscription rate limit", which is what the app
+            // showed as "Raw provider response" too, so an incident left no
+            // evidence at all and had to be reproduced to diagnose.
+            `Subscription rate limit (exit ${exitCode}): ${evidence.slice(0, 300)}`,
+            {
+              category: "subscription_limit",
+              retryAfterSeconds: parseRetryAfter(evidence),
+              provider: this.name,
+            },
+          );
         }
         throw new ClassifiedError(
-          `Claude CLI exited with code ${exitCode}: ${stderr.slice(0, 500)}`,
+          // stdout included deliberately: that is where this CLI explains
+          // itself, so a stderr-only message was usually empty and useless.
+          `Claude CLI exited with code ${exitCode}: ${(evidence || "(no output)").slice(0, 500)}`,
           { category: "cli_crashed", provider: this.name },
         );
       }
