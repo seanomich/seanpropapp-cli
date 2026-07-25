@@ -1,3 +1,5 @@
+import { detectRateLimit, parseRetryAfter } from "./rate-limit-detect.js";
+export { detectRateLimit, parseRetryAfter };
 import { spawn } from "node:child_process";
 import {
   ClassifiedError,
@@ -52,35 +54,6 @@ export function mapToClaudeCliModel(model: string): "opus" | "sonnet" | "haiku" 
   // 'sonnet', 'subscription', 'claude-sonnet-*', and unrecognized values all
   // resolve to the balanced default tier.
   return "sonnet";
-}
-
-const RATE_LIMIT_PATTERNS: RegExp[] = [
-  /rate.?limit/i,
-  /429/,
-  /too many requests/i,
-  /subscription.*limit/i,
-  /window.*capped/i,
-];
-
-const RETRY_AFTER_PATTERNS: RegExp[] = [
-  /retry.?after[:\s]+(\d+)\s*s/i,
-  /retry.?after[:\s]+(\d+)/i,
-  /try again in\s+(\d+)\s*s/i,
-];
-
-export function detectRateLimit(text: string): boolean {
-  return RATE_LIMIT_PATTERNS.some((re) => re.test(text));
-}
-
-export function parseRetryAfter(text: string): number | undefined {
-  for (const re of RETRY_AFTER_PATTERNS) {
-    const m = re.exec(text);
-    if (m && m[1]) {
-      const n = Number(m[1]);
-      if (Number.isFinite(n) && n >= 0) return n;
-    }
-  }
-  return undefined;
 }
 
 /** Flatten a message's string|block content into plain text. */
@@ -213,13 +186,19 @@ export class ClaudeProvider implements Provider {
 
     try {
       let totalOut = "";
+      // Mitigation 2 (see rate-limit-detect.ts): a limit notice REPLACES the
+      // answer, so only generated content produced before any real output can
+      // be a refusal. Once we have streamed prose, its wording is the model
+      // talking about rate limits, not the CLI hitting one.
+      let emittedChars = 0;
       if (child.stdout) {
         for await (const chunk of child.stdout as AsyncIterable<Buffer | string>) {
           const text = typeof chunk === "string" ? chunk : chunk.toString();
           if (text.length === 0) continue;
           totalOut += text;
-          // Check stdout for rate-limit signals too (CLIs sometimes write to stdout).
-          if (detectRateLimit(text)) {
+          // Some CLIs write the refusal to stdout rather than stderr, so this
+          // check stays, but ONLY before we have emitted content.
+          if (emittedChars === 0 && detectRateLimit(text)) {
             const retryAfter = parseRetryAfter(text);
             throw new ClassifiedError("Subscription rate limit", {
               category: "subscription_limit",
@@ -227,6 +206,7 @@ export class ClaudeProvider implements Provider {
               provider: this.name,
             });
           }
+          emittedChars += text.length;
           yield {
             type: "content_block_delta",
             index: 0,
@@ -242,8 +222,12 @@ export class ClaudeProvider implements Provider {
 
       const stderr = stderrChunks.join("");
       if (exitCode !== 0) {
-        if (detectRateLimit(stderr) || detectRateLimit(totalOut)) {
-          const retryAfter = parseRetryAfter(stderr) ?? parseRetryAfter(totalOut);
+        // stderr is always safe to scan (analysis prose never goes there).
+        // totalOut only counts when the run produced no real output.
+        const contentIsScannable = emittedChars === 0;
+        if (detectRateLimit(stderr) || (contentIsScannable && detectRateLimit(totalOut))) {
+          const retryAfter =
+            parseRetryAfter(stderr) ?? (contentIsScannable ? parseRetryAfter(totalOut) : undefined);
           throw new ClassifiedError("Subscription rate limit", {
             category: "subscription_limit",
             retryAfterSeconds: retryAfter,

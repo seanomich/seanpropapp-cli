@@ -1,3 +1,5 @@
+import { detectRateLimit, parseRetryAfter } from "./rate-limit-detect.js";
+export { detectRateLimit, parseRetryAfter };
 import { spawn } from "node:child_process";
 import {
   ClassifiedError,
@@ -66,14 +68,6 @@ export function buildCodexExecArgs(): string[] {
   ];
 }
 
-const RATE_LIMIT_PATTERNS: RegExp[] = [
-  /rate.?limit/i,
-  /\b429\b/,
-  /too many requests/i,
-  /quota.?exceeded/i,
-  /usage limit/i,
-];
-
 const AUTH_PATTERNS: RegExp[] = [
   /not logged in/i,
   /codex login/i,
@@ -82,22 +76,8 @@ const AUTH_PATTERNS: RegExp[] = [
   /authentication/i,
 ];
 
-export function detectRateLimit(text: string): boolean {
-  return RATE_LIMIT_PATTERNS.some((re) => re.test(text));
-}
-
 export function detectAuthError(text: string): boolean {
   return AUTH_PATTERNS.some((re) => re.test(text));
-}
-
-export function parseRetryAfter(text: string): number | undefined {
-  const re = /retry.?after[:\s]+(\d+)/i;
-  const m = re.exec(text);
-  if (m && m[1]) {
-    const n = Number(m[1]);
-    if (Number.isFinite(n) && n >= 0) return n;
-  }
-  return undefined;
 }
 
 /**
@@ -196,6 +176,10 @@ export class CodexProvider implements Provider {
 
     let outputTokens = 0;
     let rawForClassify = "";
+    // Mitigation 2 (see rate-limit-detect.ts): rawForClassify accumulates the
+    // agent's own text, so it is only a trustworthy refusal signal before any
+    // real output has been emitted.
+    let emittedChars = 0;
 
     try {
       // Parse JSONL: accumulate stdout, emit on each complete line.
@@ -214,6 +198,7 @@ export class CodexProvider implements Provider {
         }
         const text = agentTextFromEvent(evt);
         if (text) {
+          emittedChars += text.length;
           yield {
             type: "content_block_delta",
             index: 0,
@@ -244,12 +229,15 @@ export class CodexProvider implements Provider {
       });
       const stderr = stderrChunks.join("");
       const haystack = stderr + "\n" + rawForClassify;
+      // stderr is always safe to scan; the agent's own output only counts when
+      // the run produced nothing.
+      const limitHaystack = emittedChars === 0 ? haystack : stderr;
 
       if (exitCode !== 0) {
-        if (detectRateLimit(haystack)) {
+        if (detectRateLimit(limitHaystack)) {
           throw new ClassifiedError("Codex subscription rate limit reached", {
             category: "subscription_limit",
-            retryAfterSeconds: parseRetryAfter(haystack),
+            retryAfterSeconds: parseRetryAfter(limitHaystack),
             provider: this.name,
           });
         }
@@ -265,8 +253,11 @@ export class CodexProvider implements Provider {
         );
       }
 
-      // Even on a 0 exit, the CLI can report a soft rate-limit in its output.
-      if (detectRateLimit(rawForClassify)) {
+      // Even on a 0 exit, the CLI can report a soft rate-limit INSTEAD of doing
+      // the work. But a run that produced real output succeeded, and its prose
+      // must never be reinterpreted as a refusal: that turned finished analyses
+      // into fake "subscription rate limit" failures (2026-07-25 incident).
+      if (emittedChars === 0 && detectRateLimit(rawForClassify)) {
         throw new ClassifiedError("Codex subscription rate limit reached", {
           category: "subscription_limit",
           retryAfterSeconds: parseRetryAfter(rawForClassify),
