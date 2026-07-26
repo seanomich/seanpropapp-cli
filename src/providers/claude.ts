@@ -1,4 +1,4 @@
-import { detectRateLimit, parseRetryAfter } from "./rate-limit-detect.js";
+import { detectRateLimit, parseRetryAfter, classifyThrottle, throttleHeadline } from "./rate-limit-detect.js";
 export { detectRateLimit, parseRetryAfter };
 import { spawn } from "node:child_process";
 import {
@@ -221,15 +221,20 @@ export class ClaudeProvider implements Provider {
         // here can only mislabel an already-failed run; it can no longer destroy
         // a successful one.
         const evidence = [stderr, totalOut].filter(Boolean).join("\n").trim();
-        if (detectRateLimit(evidence)) {
+        const throttle = classifyThrottle(evidence);
+        if (throttle) {
           throw new ClassifiedError(
             // Carry what the provider ACTUALLY said. The old message was the
             // bare string "Subscription rate limit", which is what the app
             // showed as "Raw provider response" too, so an incident left no
             // evidence at all and had to be reproduced to diagnose.
-            `Subscription rate limit (exit ${exitCode}): ${evidence.slice(0, 300)}`,
+            //
+            // The headline now matches the actual cause (CLI #27): a provider-side
+            // 429 or 529 is NOT the user's subscription running out, and saying so
+            // sent a user with 5% of their allowance used to go buy an upgrade.
+            `${throttleHeadline(throttle, "Claude")} (exit ${exitCode}): ${evidence.slice(0, 300)}`,
             {
-              category: "subscription_limit",
+              category: throttle,
               retryAfterSeconds: parseRetryAfter(evidence),
               provider: this.name,
             },

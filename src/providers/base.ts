@@ -29,7 +29,20 @@ export type AnthropicSSEEvent =
   | { type: "content_block_stop"; index: number }
   | { type: "message_delta"; delta: { stop_reason: string | null }; usage?: { output_tokens: number } }
   | { type: "message_stop" }
-  | { type: "error"; error: { type: string; message: string; retry_after_seconds?: number } };
+  | {
+      type: "error";
+      error: {
+        /** Legacy wire value. Both throttling kinds that used to be one still map
+         *  to "rate_limit_exceeded" here, so an older client keeps working. */
+        type: string;
+        /** ADDITIVE (CLI #27): the precise ClassifiedError category, so a current
+         *  client can distinguish subscription_limit / rate_limited / overloaded
+         *  and offer the matching recovery instead of guessing from `type`. */
+        category?: ClassifiedError["category"];
+        message: string;
+        retry_after_seconds?: number;
+      };
+    };
 
 export interface ProviderDetectResult {
   installed: boolean;
@@ -48,13 +61,29 @@ export interface Provider {
 }
 
 /**
- * Error category emitted when a provider's underlying CLI reports a
- * subscription rate-limit (Claude Pro window cap, ChatGPT Plus cap, etc.).
- * The browser maps this to ProviderErrorBlock's subscription_limit subtype.
+ * A provider failure with a category the browser can act on.
+ *
+ * The throttling categories are deliberately three, not one (CLI #27). They imply
+ * different user actions, and collapsing them produced advice that was actively
+ * wrong: a user with 5% of their weekly allowance used was told to wait for a
+ * subscription window to reset, next to a button offering to sell them an upgrade.
  */
 export class ClassifiedError extends Error {
   public readonly category:
+    /** The USER's own allowance is spent: Claude Pro window cap, weekly cap,
+     *  ChatGPT Plus cap. Waiting or upgrading is the fix. */
     | "subscription_limit"
+    /** The PROVIDER is throttling this request (HTTP 429). Nothing is wrong with
+     *  the user's plan; retrying shortly, or falling back a model, is the fix.
+     *  Distinct from subscription_limit because telling someone with 5% of their
+     *  allowance used to "wait for your window to reset" is misleading, and the
+     *  app's UPGRADE SUBSCRIPTION affordance invites a purchase that fixes
+     *  nothing (CLI #27). */
+    | "rate_limited"
+    /** The provider is overloaded (HTTP 529). Retryable, and the correct trigger
+     *  for a within-class model fallback (proposition-app#652), which cannot help
+     *  when the user's own allowance is exhausted. */
+    | "overloaded"
     | "auth_required"
     | "cli_missing"
     | "cli_crashed"

@@ -171,7 +171,39 @@ describe("codex: a SUCCESSFUL run is never reclassified as a refusal", () => {
     );
 
     expect(error).toBeDefined();
-    expect(error!.category).toBe("subscription_limit");
+    // UPDATED for CLI #27. This assertion used to expect subscription_limit and
+    // that was the defect, not the contract: "Rate limit exceeded" names the RATE
+    // limit, so it is the provider throttling this request, not the user's
+    // allowance running out. Retry is the fix; buying an upgrade is not.
+    expect(error!.category).toBe("rate_limited");
     expect(error!.retryAfterSeconds).toBe(600);
+  });
+
+  it("reports a real Codex SUBSCRIPTION cap as subscription_limit (CLI #27)", async () => {
+    // The other side of the split: wording that names the plan window really is
+    // the user's allowance, and waiting or upgrading really is the fix.
+    const { error } = await collect(
+      codexWith(
+        ['{"type":"error","message":"You have reached your plan limit. Your limits will reset at 04:00 UTC."}\n'],
+        1,
+      ).stream({ model: "subscription", messages: [{ role: "user", content: "analyze" }] }),
+    );
+
+    expect(error).toBeDefined();
+    expect(error!.category).toBe("subscription_limit");
+  });
+
+  it("reports provider overload as overloaded, which is the model-fallback trigger", async () => {
+    // Distinct from both: a fallback to another model in the same class can help
+    // here, and cannot help when the user's own allowance is spent (#652).
+    const { error } = await collect(
+      codexWith(['{"type":"error","message":"529 Overloaded"}\n'], 1).stream({
+        model: "subscription",
+        messages: [{ role: "user", content: "analyze" }],
+      }),
+    );
+
+    expect(error).toBeDefined();
+    expect(error!.category).toBe("overloaded");
   });
 });

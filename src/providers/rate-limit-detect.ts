@@ -34,30 +34,87 @@
  */
 
 /**
- * Phrases a CLI uses when it is actually refusing work. Each requires an
- * explicit hit phrase, so prose that merely discusses rate limiting, quotas, or
- * the number 429 does not match.
+ * WHICH kind of throttling a message describes (CLI #27).
+ *
+ * Three outcomes because they imply three different user actions:
+ *
+ *   subscription_limit  the user's own allowance is spent. Wait for the window,
+ *                       or upgrade. A model fallback cannot help.
+ *   rate_limited        the provider is throttling this request (429). Retry
+ *                       shortly. Nothing is wrong with the plan.
+ *   overloaded          the provider is overloaded (529). Retry, and this is the
+ *                       correct trigger for a within-class model fallback.
+ *
+ * Collapsing all three into subscription_limit is what told a user with 5% of
+ * their weekly allowance used to "wait for the subscription window to reset, or
+ * upgrade your plan", beside an UPGRADE SUBSCRIPTION button that would have fixed
+ * nothing (2026-07-26 Opus 5 incident).
+ *
+ * Order is significant: subscription wording is checked FIRST because it is the
+ * most specific. Claude's CLI says "usage limit reached" and "your limits will
+ * reset at HH:MM" for the subscription window, whereas a raw provider 429 says
+ * "exceeded your RATE limit". The distinguishing signal is the noun, not the verb.
  */
-const RATE_LIMIT_PATTERNS: RegExp[] = [
-  // "<kind> limit reached" / "<kind> limits exceeded"
-  /\b(?:rate|usage|subscription|plan|weekly|daily|hourly|5-hour)\s+limits?\s+(?:has been\s+|have been\s+|was\s+|were\s+)?(?:reached|exceeded)\b/i,
-  // "exceeded your current usage limit"
-  /\bexceeded\s+(?:your\s+)?(?:current\s+)?(?:rate|usage|subscription|plan)\s+limits?\b/i,
-  // Reverse word order: "You've reached your usage limit for this 5-hour
-  // window". Claude's CLI phrases it this way, and a verb-first pattern is the
-  // one a noun-first rule misses. Note this CAN match prose such as
-  // "competitors have reached their plan limits". What covers that differs by
-  // provider: claude never inspects the content stream at all (the exit code is
-  // its only trigger, because `claude --print` single-chunks the whole answer),
-  // while codex still uses the no-output-yet gate, which is meaningful there
-  // because it emits real per-line JSONL events.
-  /\breached\s+(?:your\s+|their\s+|the\s+)?(?:current\s+)?(?:rate|usage|subscription|plan|weekly|daily)\s+limits?\b/i,
-  // The literal HTTP 429 reason phrase. A bare "429" is NOT enough.
+export type ThrottleKind = 'subscription_limit' | 'rate_limited' | 'overloaded';
+
+/** The user's own plan allowance. Claude CLI and Codex CLI wording. */
+const SUBSCRIPTION_PATTERNS: RegExp[] = [
+  /\b(?:usage|subscription|plan|weekly|daily|hourly|5-hour)\s+limits?\s+(?:has been\s+|have been\s+|was\s+|were\s+)?(?:reached|exceeded)\b/i,
+  /\breached\s+(?:your\s+|their\s+|the\s+)?(?:current\s+)?(?:usage|subscription|plan|weekly|daily)\s+limits?\b/i,
+  /\bexceeded\s+(?:your\s+)?(?:current\s+)?(?:usage|subscription|plan)\s+limits?\b/i,
+  // A reset time is only ever quoted for a window cap.
+  /\blimits?\s+will\s+reset\s+(?:at|in)\b/i,
+  /\bupgrade\s+(?:your\s+)?plan\b/i,
+];
+
+/** The provider is over capacity. HTTP 529 on the Anthropic API. */
+const OVERLOADED_PATTERNS: RegExp[] = [
+  /\boverloaded\b/i,
+  // Only alongside the word, never a bare number: "529" appears in prose.
+  /\b529\s+overloaded\b/i,
+];
+
+/** Provider-side throttling of this request. HTTP 429. */
+const RATE_LIMIT_ONLY_PATTERNS: RegExp[] = [
+  /\brate\s+limits?\s+(?:has been\s+|have been\s+|was\s+|were\s+)?(?:reached|exceeded)\b/i,
+  /\bexceeded\s+(?:your\s+)?(?:current\s+)?rate\s+limits?\b/i,
+  /\breached\s+(?:your\s+|their\s+|the\s+)?(?:current\s+)?rate\s+limits?\b/i,
   /\btoo many requests\b/i,
   /\bquota\s+exceeded\b/i,
-  // Claude CLI's reset wording, e.g. "Your limits will reset at 03:00 UTC".
-  /\blimits?\s+will\s+reset\s+(?:at|in)\b/i,
 ];
+
+/**
+ * Classify a throttling message, or null when the text does not claim one.
+ *
+ * Same two safety properties as `detectRateLimit`: a limit must be CLAIMED rather
+ * than merely discussed, and the caller must only pass generated model output when
+ * the CLI has already reported failure (see the module docstring).
+ */
+export function classifyThrottle(text: string): ThrottleKind | null {
+  if (SUBSCRIPTION_PATTERNS.some((re) => re.test(text))) return 'subscription_limit';
+  if (OVERLOADED_PATTERNS.some((re) => re.test(text))) return 'overloaded';
+  if (RATE_LIMIT_ONLY_PATTERNS.some((re) => re.test(text))) return 'rate_limited';
+  return null;
+}
+
+/** Human-readable lead-in per kind, so the app never has to invent the wording. */
+export function throttleHeadline(kind: ThrottleKind, provider: string): string {
+  switch (kind) {
+    case 'subscription_limit':
+      return `${provider} subscription limit reached`;
+    case 'overloaded':
+      return `${provider} is overloaded right now`;
+    case 'rate_limited':
+      return `${provider} rate limit on this request`;
+  }
+}
+
+/*
+ * The old flat RATE_LIMIT_PATTERNS list is gone. It is now three ordered lists
+ * (SUBSCRIPTION_PATTERNS / OVERLOADED_PATTERNS / RATE_LIMIT_ONLY_PATTERNS) above,
+ * because a single list could say "this is a throttle" but never which kind, and
+ * every match was reported as the user's subscription running out.
+ */
 
 /**
  * True when `text` claims a rate/usage limit was hit.
@@ -67,7 +124,9 @@ const RATE_LIMIT_PATTERNS: RegExp[] = [
  * the module docstring, mitigation 2).
  */
 export function detectRateLimit(text: string): boolean {
-  return RATE_LIMIT_PATTERNS.some((re) => re.test(text));
+  // Derived from classifyThrottle so the boolean gate and the three-way
+  // classification can never disagree about whether a message is a throttle.
+  return classifyThrottle(text) !== null;
 }
 
 const RETRY_AFTER_PATTERNS: RegExp[] = [

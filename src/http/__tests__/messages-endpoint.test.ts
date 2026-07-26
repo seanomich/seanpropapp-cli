@@ -111,6 +111,29 @@ describe("/v1/messages", () => {
     expect(text).toContain('"retry_after_seconds":42');
   });
 
+  // CLI #27 wire contract. The app needs to tell "your allowance is spent" from
+  // "the provider is throttling or overloaded" to offer the right recovery, and
+  // the legacy `type` field cannot express that: both throttling kinds map to
+  // rate_limit_exceeded there. So the precise category rides alongside it.
+  //
+  // ADDITIVE on purpose: `type` keeps its old values so an older paired bridge or
+  // client is unaffected mid-upgrade. proposition-app#651 consumes `category`.
+  it.each([
+    { category: "subscription_limit" as const, legacyType: "rate_limit_exceeded" },
+    { category: "rate_limited" as const, legacyType: "rate_limit_exceeded" },
+    { category: "overloaded" as const, legacyType: "overloaded" },
+  ])("carries the precise category $category alongside legacy type $legacyType", async ({ category, legacyType }) => {
+    const err = new ClassifiedError("boom", { category, retryAfterSeconds: 7 });
+    const res = await post(
+      appWith(streamingProvider("claude", [{ type: "message_start", message: { id: "m", model: "c" } }], err)),
+      OK_BODY,
+    );
+    const text = await res.text();
+    expect(text).toContain(`"category":"${category}"`);
+    expect(text).toContain(`"type":"${legacyType}"`);
+    expect(text).toContain('"retry_after_seconds":7');
+  });
+
   it("surfaces a generic provider error as an internal_error event (never hangs)", async () => {
     const res = await post(
       appWith(streamingProvider("claude", [], new Error("boom"))),
