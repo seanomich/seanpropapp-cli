@@ -212,14 +212,51 @@ describe("claude provider — stream()", () => {
     expect(child?.stdinData).toContain("Now regenerate incorporating the above.");
   });
 
-  it("emits ClassifiedError(subscription_limit) when output contains 429", async () => {
+  // REWRITTEN 2026-07-25. The previous version of this test asserted that
+  // limit-shaped stdout with exitCode 0 must become a subscription_limit, i.e.
+  // it ENCODED the defect that broke two production runs: grading the model's
+  // own prose on a run the CLI reported as successful. `claude --print` emits the
+  // entire answer as ONE stdout chunk, so "the output contains a limit phrase"
+  // and "the answer discusses limits" are indistinguishable at that layer. The
+  // exit code is now the only trigger.
+  it("does NOT reclassify a successful run whose output discusses limits", async () => {
+    const provider = new ClaudeProvider({
+      whichFn: async () => "/usr/local/bin/claude",
+      runCaptureFn: async () => ({ code: 0, stdout: "", stderr: "" }),
+      spawnFn: (() =>
+        new FakeChildProcess({
+          // Exit 0 means the CLI did the work. This is an ANSWER about rate
+          // limits, not a refusal.
+          stdoutChunks: ["Rate limit exceeded is the error competitors return at 429."],
+          exitCode: 0,
+        })) as never,
+    });
+
+    const { events, error } = await collect(
+      provider.stream({
+        model: "claude-3-5-sonnet",
+        messages: [{ role: "user", content: "hi" }],
+      }),
+    );
+    expect(error).toBeUndefined();
+    const text = events
+      .filter((e) => e.type === "content_block_delta")
+      .map((e) => (e.type === "content_block_delta" ? e.delta.text : ""))
+      .join("");
+    expect(text).toContain("Rate limit exceeded");
+  });
+
+  it("DOES classify a limit once the CLI reports failure (non-zero exit)", async () => {
+    // Measured behaviour: this CLI writes failures to STDOUT with exit=1 and
+    // leaves stderr empty, so stdout must still be readable as evidence, but
+    // only after the exit code says the run failed.
     const provider = new ClaudeProvider({
       whichFn: async () => "/usr/local/bin/claude",
       runCaptureFn: async () => ({ code: 0, stdout: "", stderr: "" }),
       spawnFn: (() =>
         new FakeChildProcess({
           stdoutChunks: ["Rate limit exceeded. Retry-After: 1640"],
-          exitCode: 0,
+          exitCode: 1,
         })) as never,
     });
 
@@ -232,6 +269,9 @@ describe("claude provider — stream()", () => {
     expect(error).toBeInstanceOf(ClassifiedError);
     expect(error?.category).toBe("subscription_limit");
     expect(error?.retryAfterSeconds).toBe(1640);
+    // The error must carry what the provider actually said. The old bare
+    // "Subscription rate limit" string left an incident with zero evidence.
+    expect(error?.message).toContain("Rate limit exceeded");
   });
 
   it("throws ClassifiedError(cli_missing) when CLI not installed", async () => {

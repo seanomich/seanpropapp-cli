@@ -1,3 +1,5 @@
+import { detectRateLimit, parseRetryAfter } from "./rate-limit-detect.js";
+export { detectRateLimit, parseRetryAfter };
 import { spawn } from "node:child_process";
 import {
   ClassifiedError,
@@ -52,35 +54,6 @@ export function mapToClaudeCliModel(model: string): "opus" | "sonnet" | "haiku" 
   // 'sonnet', 'subscription', 'claude-sonnet-*', and unrecognized values all
   // resolve to the balanced default tier.
   return "sonnet";
-}
-
-const RATE_LIMIT_PATTERNS: RegExp[] = [
-  /rate.?limit/i,
-  /429/,
-  /too many requests/i,
-  /subscription.*limit/i,
-  /window.*capped/i,
-];
-
-const RETRY_AFTER_PATTERNS: RegExp[] = [
-  /retry.?after[:\s]+(\d+)\s*s/i,
-  /retry.?after[:\s]+(\d+)/i,
-  /try again in\s+(\d+)\s*s/i,
-];
-
-export function detectRateLimit(text: string): boolean {
-  return RATE_LIMIT_PATTERNS.some((re) => re.test(text));
-}
-
-export function parseRetryAfter(text: string): number | undefined {
-  for (const re of RETRY_AFTER_PATTERNS) {
-    const m = re.exec(text);
-    if (m && m[1]) {
-      const n = Number(m[1]);
-      if (Number.isFinite(n) && n >= 0) return n;
-    }
-  }
-  return undefined;
 }
 
 /** Flatten a message's string|block content into plain text. */
@@ -213,20 +186,18 @@ export class ClaudeProvider implements Provider {
 
     try {
       let totalOut = "";
+      // NO rate-limit inspection of the content stream. `claude --print` is not
+      // incremental: it emits the ENTIRE answer as a single stdout chunk (proven
+      // by measurement, 1 chunk). So any "only look before real content arrives"
+      // guard is vacuous here, and pattern-matching this chunk means grading the
+      // model's own prose. That is what killed two production runs on the
+      // Competitive Landscape module. Classification happens ONLY after a
+      // non-zero exit, below.
       if (child.stdout) {
         for await (const chunk of child.stdout as AsyncIterable<Buffer | string>) {
           const text = typeof chunk === "string" ? chunk : chunk.toString();
           if (text.length === 0) continue;
           totalOut += text;
-          // Check stdout for rate-limit signals too (CLIs sometimes write to stdout).
-          if (detectRateLimit(text)) {
-            const retryAfter = parseRetryAfter(text);
-            throw new ClassifiedError("Subscription rate limit", {
-              category: "subscription_limit",
-              retryAfterSeconds: retryAfter,
-              provider: this.name,
-            });
-          }
           yield {
             type: "content_block_delta",
             index: 0,
@@ -242,16 +213,32 @@ export class ClaudeProvider implements Provider {
 
       const stderr = stderrChunks.join("");
       if (exitCode !== 0) {
-        if (detectRateLimit(stderr) || detectRateLimit(totalOut)) {
-          const retryAfter = parseRetryAfter(stderr) ?? parseRetryAfter(totalOut);
-          throw new ClassifiedError("Subscription rate limit", {
-            category: "subscription_limit",
-            retryAfterSeconds: retryAfter,
-            provider: this.name,
-          });
+        // The exit code is the ONLY trigger. Measured behaviour: the Claude CLI
+        // reports failures on STDOUT with exit=1 and leaves stderr EMPTY (a bad
+        // --model prints the explanation to stdout, stderr ""). So scanning
+        // stderr alone would detect nothing real, and scanning stdout is only
+        // safe once the CLI has already told us the run failed. A false positive
+        // here can only mislabel an already-failed run; it can no longer destroy
+        // a successful one.
+        const evidence = [stderr, totalOut].filter(Boolean).join("\n").trim();
+        if (detectRateLimit(evidence)) {
+          throw new ClassifiedError(
+            // Carry what the provider ACTUALLY said. The old message was the
+            // bare string "Subscription rate limit", which is what the app
+            // showed as "Raw provider response" too, so an incident left no
+            // evidence at all and had to be reproduced to diagnose.
+            `Subscription rate limit (exit ${exitCode}): ${evidence.slice(0, 300)}`,
+            {
+              category: "subscription_limit",
+              retryAfterSeconds: parseRetryAfter(evidence),
+              provider: this.name,
+            },
+          );
         }
         throw new ClassifiedError(
-          `Claude CLI exited with code ${exitCode}: ${stderr.slice(0, 500)}`,
+          // stdout included deliberately: that is where this CLI explains
+          // itself, so a stderr-only message was usually empty and useless.
+          `Claude CLI exited with code ${exitCode}: ${(evidence || "(no output)").slice(0, 500)}`,
           { category: "cli_crashed", provider: this.name },
         );
       }
