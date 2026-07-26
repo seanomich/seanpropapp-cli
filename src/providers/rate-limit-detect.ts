@@ -46,8 +46,11 @@ const RATE_LIMIT_PATTERNS: RegExp[] = [
   // Reverse word order: "You've reached your usage limit for this 5-hour
   // window". Claude's CLI phrases it this way, and a verb-first pattern is the
   // one a noun-first rule misses. Note this CAN match prose such as
-  // "competitors have reached their plan limits"; mitigation 2 (only consult
-  // generated content before any output was emitted) is what covers that.
+  // "competitors have reached their plan limits". What covers that differs by
+  // provider: claude never inspects the content stream at all (the exit code is
+  // its only trigger, because `claude --print` single-chunks the whole answer),
+  // while codex still uses the no-output-yet gate, which is meaningful there
+  // because it emits real per-line JSONL events.
   /\breached\s+(?:your\s+|their\s+|the\s+)?(?:current\s+)?(?:rate|usage|subscription|plan|weekly|daily)\s+limits?\b/i,
   // The literal HTTP 429 reason phrase. A bare "429" is NOT enough.
   /\btoo many requests\b/i,
