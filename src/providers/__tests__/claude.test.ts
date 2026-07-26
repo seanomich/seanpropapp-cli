@@ -267,11 +267,16 @@ describe("claude provider — stream()", () => {
       }),
     );
     expect(error).toBeInstanceOf(ClassifiedError);
-    expect(error?.category).toBe("subscription_limit");
+    // CLI #27: "Rate limit exceeded" names the RATE limit, so it is provider-side
+    // throttling, NOT the user's subscription allowance running out. Reporting it
+    // as a subscription limit is what told a user with 5% of their weekly
+    // allowance used to wait for a window reset or buy an upgrade.
+    expect(error?.category).toBe("rate_limited");
     expect(error?.retryAfterSeconds).toBe(1640);
     // The error must carry what the provider actually said. The old bare
     // "Subscription rate limit" string left an incident with zero evidence.
     expect(error?.message).toContain("Rate limit exceeded");
+    expect(error?.message).not.toMatch(/subscription/i);
   });
 
   it("throws ClassifiedError(cli_missing) when CLI not installed", async () => {
@@ -288,7 +293,7 @@ describe("claude provider — stream()", () => {
     expect(error?.category).toBe("cli_missing");
   });
 
-  it("classifies non-zero exit with rate-limit stderr as subscription_limit", async () => {
+  it("classifies a 429 on stderr as rate_limited, not subscription_limit (CLI #27)", async () => {
     const provider = new ClaudeProvider({
       whichFn: async () => "/usr/local/bin/claude",
       runCaptureFn: async () => ({ code: 0, stdout: "claude 1.0.5", stderr: "" }),
@@ -305,7 +310,42 @@ describe("claude provider — stream()", () => {
         messages: [{ role: "user", content: "hi" }],
       }),
     );
-    expect(error?.category).toBe("subscription_limit");
+    expect(error?.category).toBe("rate_limited");
     expect(error?.retryAfterSeconds).toBe(30);
+  });
+
+  // CLI #27: the three throttling kinds imply three different user actions, so
+  // they must not collapse into one. These are end-to-end through the provider,
+  // not just the classifier, because the category the browser receives is what
+  // decides which recovery UI it can offer.
+  it.each([
+    {
+      kind: "subscription_limit",
+      stderr: "Usage limit reached. Your limits will reset at 04:00 UTC.",
+      why: "the user's own weekly/window allowance is spent; waiting or upgrading is the fix",
+    },
+    {
+      kind: "overloaded",
+      stderr: "API Error: 529 Overloaded",
+      why: "the provider is over capacity; retry, and it is the right trigger for a model fallback",
+    },
+    {
+      kind: "rate_limited",
+      stderr: "Number of requests has exceeded your rate limit",
+      why: "the provider is throttling this request; nothing is wrong with the plan",
+    },
+  ])("reports $kind because $why", async ({ kind, stderr }) => {
+    const provider = new ClaudeProvider({
+      whichFn: async () => "/usr/local/bin/claude",
+      runCaptureFn: async () => ({ code: 0, stdout: "claude 2.1.0", stderr: "" }),
+      spawnFn: (() =>
+        new FakeChildProcess({ stdoutChunks: [], stderrChunks: [stderr], exitCode: 1 })) as never,
+    });
+    const { error } = await collect(
+      provider.stream({ model: "opus", messages: [{ role: "user", content: "hi" }] }),
+    );
+    expect(error?.category).toBe(kind);
+    // Evidence still travels, so an incident is diagnosable from the report alone.
+    expect(error?.message).toContain(stderr.slice(0, 20));
   });
 });

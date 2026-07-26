@@ -42,10 +42,17 @@ function errorEventBytes(err: ClassifiedError): Uint8Array {
   return encodeAnthropicSSE({
     type: "error",
     error: {
+      // Legacy wire value, kept so an older browser build keeps behaving. Both
+      // throttling kinds that used to be one still map to the same string here.
       type:
-        err.category === "subscription_limit"
+        err.category === "subscription_limit" || err.category === "rate_limited"
           ? "rate_limit_exceeded"
           : err.category,
+      // ADDITIVE (CLI #27): the precise category, so a current browser can tell
+      // "your allowance is spent" from "the provider is throttling or overloaded"
+      // and offer the right recovery. Additive on purpose: changing `type` would
+      // break older paired bridges/clients mid-upgrade.
+      category: err.category,
       message: err.message,
       retry_after_seconds: err.retryAfterSeconds,
     },

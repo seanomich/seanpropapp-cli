@@ -137,11 +137,15 @@ export function makeChatCompletionsHandler(deps: ChatCompletionsDeps) {
               : String(err);
         const errBody = {
           error: {
+            // Legacy wire value (see messages-endpoint): both throttling kinds
+            // that used to be one still map to the same string.
             type:
               err instanceof ClassifiedError &&
-              err.category === "subscription_limit"
+              (err.category === "subscription_limit" || err.category === "rate_limited")
                 ? "rate_limit_exceeded"
                 : "internal_error",
+            // ADDITIVE (CLI #27): precise category for clients that read it.
+            category: err instanceof ClassifiedError ? err.category : undefined,
             message,
             retry_after_seconds:
               err instanceof ClassifiedError ? err.retryAfterSeconds : undefined,

@@ -1,4 +1,4 @@
-import { detectRateLimit, parseRetryAfter } from "./rate-limit-detect.js";
+import { detectRateLimit, parseRetryAfter, classifyThrottle, throttleHeadline } from "./rate-limit-detect.js";
 export { detectRateLimit, parseRetryAfter };
 import { spawn } from "node:child_process";
 import {
@@ -234,12 +234,14 @@ export class CodexProvider implements Provider {
       const limitHaystack = emittedChars === 0 ? haystack : stderr;
 
       if (exitCode !== 0) {
-        if (detectRateLimit(limitHaystack)) {
+        const throttle = classifyThrottle(limitHaystack);
+        if (throttle) {
           throw new ClassifiedError(
             // Include what the CLI actually said, so an incident leaves evidence.
-            `Codex subscription rate limit reached (exit ${exitCode}): ${limitHaystack.trim().slice(0, 300)}`,
+            // Headline matches the real cause (CLI #27), not always "subscription".
+            `${throttleHeadline(throttle, "Codex")} (exit ${exitCode}): ${limitHaystack.trim().slice(0, 300)}`,
             {
-              category: "subscription_limit",
+              category: throttle,
               retryAfterSeconds: parseRetryAfter(limitHaystack),
               provider: this.name,
             },
@@ -264,12 +266,16 @@ export class CodexProvider implements Provider {
       // limit" failures (2026-07-25). Unlike the Claude provider, codex emits
       // structured JSONL, so emittedChars genuinely tracks agent text here and
       // this gate is meaningful rather than vacuous.
-      if (emittedChars === 0 && detectRateLimit(rawForClassify)) {
-        throw new ClassifiedError("Codex subscription rate limit reached", {
-          category: "subscription_limit",
-          retryAfterSeconds: parseRetryAfter(rawForClassify),
-          provider: this.name,
-        });
+      const zeroExitThrottle = emittedChars === 0 ? classifyThrottle(rawForClassify) : null;
+      if (zeroExitThrottle) {
+        throw new ClassifiedError(
+          `${throttleHeadline(zeroExitThrottle, "Codex")}: ${rawForClassify.trim().slice(0, 300)}`,
+          {
+            category: zeroExitThrottle,
+            retryAfterSeconds: parseRetryAfter(rawForClassify),
+            provider: this.name,
+          },
+        );
       }
 
       yield { type: "content_block_stop", index: 0 };
