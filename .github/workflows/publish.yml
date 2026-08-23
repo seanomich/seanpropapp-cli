@@ -57,8 +57,25 @@ jobs:
       - name: Publish with provenance (idempotent + verified)
         run: |
           version="${GITHUB_REF#refs/tags/v}"
+
+          # npm >= 11.17 REFUSES to publish a prerelease without an explicit
+          # --tag ("You must specify a tag using --tag when publishing a
+          # prerelease version"), which failed the v0.1.0-beta.15 run outright.
+          # It is also the right behavior regardless of the npm version: with no
+          # --tag, npm defaults to `latest`, so once a stable line exists a beta
+          # tag push would silently move `latest` and every plain
+          # `npm install @seanpropapp/cli` / `npx @seanpropapp/cli` would serve
+          # a prerelease. Semver precedence does NOT protect against this --
+          # dist-tags are assigned by the publish command, not derived from
+          # version ordering.
+          case "$version" in
+            *-*) dist_tag=beta ;;
+            *)   dist_tag=latest ;;
+          esac
+          echo "Publishing $version to dist-tag: $dist_tag"
+
           set +e
-          npm publish --provenance --access public
+          npm publish --provenance --access public --tag "$dist_tag"
           pub_exit=$?
           set -e
           # Do NOT trust the publish exit code alone. npm can return E403
@@ -78,6 +95,18 @@ jobs:
           done
           if [ -n "$pred" ]; then
             echo "::notice::${version} is published WITH provenance (${pred}); npm publish exit was ${pub_exit}."
+            # A prerelease must never have moved `latest`. Checked on the
+            # registry rather than trusted from the flag, for the same reason
+            # the provenance check exists: the flag is the intent, the registry
+            # is the outcome.
+            if [ "$dist_tag" = "beta" ]; then
+              latest=$(npm view "@seanpropapp/cli" dist-tags.latest 2>/dev/null || true)
+              if [ "$latest" = "$version" ]; then
+                echo "::error::Prerelease ${version} became the 'latest' dist-tag. Repoint it before anyone installs it." >&2
+                exit 1
+              fi
+              echo "::notice::'latest' still points at ${latest}; ${version} is on 'beta'."
+            fi
             exit 0
           fi
           echo "::error::${version} has NO provenance attestation on npm (npm publish exit ${pub_exit}). Failing the release." >&2
