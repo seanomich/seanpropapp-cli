@@ -199,46 +199,69 @@ describe("wire smoke: real socket, real fetch", () => {
    * The assertion is that the SERVER SURVIVES and still answers -- not merely
    * that the cancel resolved, which it did even while the bug was live.
    *
-   * HOW THIS TEST ACTUALLY GATES THE BUG -- read before "cleaning up" noise.
-   * Measured both ways: `vitest run` on this file exits 1 without the fix and 0
-   * with it. But the exit-1 comes from vitest failing the run on the escaped
-   * unhandled rejection, NOT from the assertion below, which passes either way
-   * because a vitest worker does not die on an unhandled rejection the way the
-   * bare `node` bridge process does.
+   * HOW THIS TEST GATES THE BUG. The test installs its own scoped
+   * `unhandledRejection` listener and asserts nothing escaped, so the FAILING
+   * ASSERTION is the gate. That is deliberate: the first version of this test
+   * relied on vitest's global unhandled-error channel to fail the run, which
+   * did work (exit 1 without the fix, 0 with it) but was fragile in two ways.
+   * The assertion passed in BOTH states, so the test read as green while
+   * proving nothing; and any global `process.on("unhandledRejection")` handler
+   * or a `--unhandled-rejections=warn` flag added later would have silenced the
+   * channel and left the suite green against a bridge that crashes in
+   * production.
    *
-   * So: do NOT register a global `process.on("unhandledRejection")` handler in
-   * this suite or in vitest setup, and do not set
-   * `--unhandled-rejections=warn`. Any of those silences the channel this test
-   * gates on and leaves it green against a bridge that crashes in production.
-   * (That mistake was made once while diagnosing this: an early repro installed
-   * such a handler and reported the process surviving, which was an artifact of
-   * the handler, not of the code.)
+   * A vitest worker does not die on an unhandled rejection the way the bare
+   * `node` bridge process does, so counting escaped rejections is the closest
+   * faithful proxy available in-process. Beware when hand-testing this: an
+   * early repro installed such a handler and reported the process surviving,
+   * which was an artifact of the handler rather than a property of the code.
    */
   it("survives a client aborting mid-stream and keeps serving", async () => {
-    const res = await fetch(url("/v1/messages"), {
-      method: "POST",
-      headers: {
-        Origin: ORIGIN,
-        Authorization: `Bearer ${TOKEN}`,
-        "Content-Type": "application/json",
-      },
-      body: STREAM_BODY,
-    });
-    expect(res.status).toBe(200);
+    // Capture escaped rejections ON PURPOSE, scoped to this one test, so the
+    // ASSERTION is what fails when the bug returns. See the note above: relying
+    // on vitest's global unhandled-error channel worked but was disarmable by a
+    // stray global handler or a --unhandled-rejections=warn flag, and left the
+    // assertion passing in both states. This listener is added and removed
+    // inside the test so it cannot mask rejections from other suites sharing
+    // the worker.
+    const escaped: unknown[] = [];
+    const capture = (reason: unknown) => escaped.push(reason);
+    process.on("unhandledRejection", capture);
 
-    const reader = res.body!.getReader();
-    await reader.read();
-    await reader.cancel();
+    try {
+      const res = await fetch(url("/v1/messages"), {
+        method: "POST",
+        headers: {
+          Origin: ORIGIN,
+          Authorization: `Bearer ${TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        body: STREAM_BODY,
+      });
+      expect(res.status).toBe(200);
 
-    // Give the abandoned streaming task a turn to reject if it is going to.
-    await new Promise((r) => setTimeout(r, 100));
+      const reader = res.body!.getReader();
+      await reader.read();
+      await reader.cancel();
 
-    // The listener is still up and serving. Under the bug this process would
-    // already have exited, taking the test runner with it.
-    const after = await fetch(url("/v1/handshake"), {
-      headers: { Authorization: `Bearer ${TOKEN}` },
-    });
-    expect(after.status).toBe(200);
+      // Give the abandoned streaming task a turn to reject if it is going to,
+      // and a macrotask turn for Node to promote it to unhandledRejection.
+      await new Promise((r) => setTimeout(r, 100));
+
+      // THE ASSERTION THAT GATES THE BUG. In the bare `node` bridge process an
+      // escaped rejection here is fatal (verified: exit 1,
+      // ERR_UNHANDLED_REJECTION). A vitest worker survives it, so the count is
+      // the only faithful proxy available in-process.
+      expect(escaped).toEqual([]);
+
+      // And the listener is still up and serving afterwards.
+      const after = await fetch(url("/v1/handshake"), {
+        headers: { Authorization: `Bearer ${TOKEN}` },
+      });
+      expect(after.status).toBe(200);
+    } finally {
+      process.off("unhandledRejection", capture);
+    }
   });
 
   it("streams the SSE body in more than one chunk", async () => {
