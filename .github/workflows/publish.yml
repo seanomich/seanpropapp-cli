@@ -19,12 +19,19 @@ jobs:
       # actions/checkout@v4.1.1
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
 
-      # actions/setup-node@v4.0.2
-      - uses: actions/setup-node@60edb5dd545a775178f52524783378180af0d1f8
+      # actions/setup-node@v6.5.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
-          node-version: "22"
+          # Node 24 bundles npm 11.17.0. Trusted publishing (OIDC) needs
+          # npm >= 11.5.1; Node 22 ships npm 10.9.x, which is below that floor.
+          # Bumping Node is deliberate in preference to `npm i -g npm@latest`,
+          # which now resolves to npm 12 and its install-time security defaults
+          # (scripts off, --allow-git none) -- an unrelated breaking change.
+          # `engines` in package.json is >=18, so this affects CI only.
+          node-version: "24"
           registry-url: "https://registry.npmjs.org"
-          cache: npm
+          # npm's documented guidance for release builds: no dependency cache.
+          package-manager-cache: false
 
       - name: Install
         run: npm ci
@@ -75,5 +82,3 @@ jobs:
           fi
           echo "::error::${version} has NO provenance attestation on npm (npm publish exit ${pub_exit}). Failing the release." >&2
           exit 1
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
