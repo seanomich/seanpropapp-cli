@@ -120,21 +120,33 @@ export function makeMessagesHandler(deps: MessagesDeps) {
           outcome: "error",
           category: err instanceof ClassifiedError ? err.category : "unknown",
         });
+        // These writes go to a stream that may ALREADY be dead -- the common way
+        // to reach this catch is the client disconnecting mid-stream, which
+        // rejects the write in the try block above. Writing again to the same
+        // broken writer rejects a second time, and because this IIFE is
+        // deliberately not awaited, that rejection escapes as an unhandled
+        // rejection and Node kills the bridge process (exit 1). A browser tab
+        // closed during an analysis was enough to do it. There is nobody left to
+        // deliver the error event to in that case, so swallow the failure.
         if (err instanceof ClassifiedError) {
-          await writer.write(errorEventBytes(err));
+          await writer.write(errorEventBytes(err)).catch(() => undefined);
         } else {
           const message = err instanceof Error ? err.message : String(err);
-          await writer.write(
-            encodeAnthropicSSE({
-              type: "error",
-              error: { type: "internal_error", message },
-            }),
-          );
+          await writer
+            .write(
+              encodeAnthropicSSE({
+                type: "error",
+                error: { type: "internal_error", message },
+              }),
+            )
+            .catch(() => undefined);
         }
       } finally {
         await writer.close().catch(() => undefined);
       }
-    })();
+      // Backstop: nothing from this un-awaited task may escape as an unhandled
+      // rejection, whatever future code is added above.
+    })().catch(() => undefined);
 
     // The raw `new Response()` here bypasses Hono's response builder, so the
     // CORS headers set by corsMiddleware on the context never reach the wire.

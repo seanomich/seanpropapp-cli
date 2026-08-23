@@ -151,13 +151,18 @@ export function makeChatCompletionsHandler(deps: ChatCompletionsDeps) {
               err instanceof ClassifiedError ? err.retryAfterSeconds : undefined,
           },
         };
-        await writer.write(
-          new TextEncoder().encode(`data: ${JSON.stringify(errBody)}\n\n`),
-        );
+        // See messages-endpoint.ts: this write can land on an already-dead
+        // stream when the client disconnected mid-stream, and an un-awaited
+        // rejection here kills the bridge process. Nobody is listening, so
+        // swallow it.
+        await writer
+          .write(new TextEncoder().encode(`data: ${JSON.stringify(errBody)}\n\n`))
+          .catch(() => undefined);
       } finally {
         await writer.close().catch(() => undefined);
       }
-    })();
+      // Backstop against any future un-awaited rejection escaping this task.
+    })().catch(() => undefined);
 
     // See messages-endpoint.ts for the same rationale: the raw `new Response()`
     // bypasses Hono's middleware-set headers, so CORS must be injected inline.
