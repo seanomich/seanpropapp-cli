@@ -14,18 +14,27 @@
  */
 
 /**
- * Model names proposition-app sends for the three local_bridge tiers
+ * Model names proposition-app sends for the four local_bridge tiers
  * (src/lib/llm/models.ts MODEL_MAP.local_bridge[tier].modelId). The bridge's
  * mapToClaudeCliModel MUST accept each of these VERBATIM (not via the
  * default-to-sonnet fallback), or a tier silently degrades to sonnet.
  */
 export const BRIDGE_TIER_MODELS = {
+  max: "claude-fable-5-1",
   deep: "opus",
   standard: "sonnet",
   quick: "haiku",
 } as const;
 
 export const BRIDGE_MODEL_NAMES = ["opus", "sonnet", "haiku"] as const;
+
+/**
+ * Full model ids proposition-app sends for the bridge Max tier and the Deep
+ * fallback ladder (MODEL_MAP.local_bridge.max.modelId, BRIDGE_MODEL_LADDER.deep).
+ * The bridge MUST hand each to `claude --model` VERBATIM: mapping them onto an
+ * alias silently ran Sonnet for Max and collapsed every Opus rung to 'opus'.
+ */
+export const BRIDGE_FULL_MODEL_IDS = ["claude-fable-5-1", "claude-opus-5", "claude-opus-4-8"] as const;
 
 /**
  * A canonical POST /v1/messages request body as the browser produces it
