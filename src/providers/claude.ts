@@ -1,3 +1,6 @@
+import { mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { detectRateLimit, parseRetryAfter, classifyThrottle, throttleHeadline } from "./rate-limit-detect.js";
 export { detectRateLimit, parseRetryAfter };
 import { spawn } from "node:child_process";
@@ -45,6 +48,16 @@ const DEFAULT_BINARY = "claude";
  * 'subscription' will stop appearing in real traffic. The mapping stays as a
  * safety net for older clients.
  */
+/** An empty working directory for module runs, so no project context leaks in. */
+export function cleanWorkingDir(): string {
+  const dir = join(tmpdir(), "seanpropapp-bridge-run");
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+/** An MCP config with no servers, passed inline to `claude --mcp-config`. */
+export const EMPTY_MCP_CONFIG = JSON.stringify({ mcpServers: {} });
+
 export function mapToClaudeCliModel(model: string): string {
   const normalized = model.trim().toLowerCase();
   if (normalized === "opus" || normalized === "sonnet" || normalized === "haiku") {
@@ -161,7 +174,21 @@ export class ClaudeProvider implements Provider {
     //   "There's an issue with the selected model (subscription). It may
     //    not exist or you may not have access to it."
     const cliModel = mapToClaudeCliModel(request.model);
-    const args = ["--print", "--model", cliModel];
+    // A module run must never see the user's MCP servers (seanpropapp-cli#39).
+    // With the claude.ai SeanPropApp connector loaded, "Run the Company Context
+    // module" invited the model to call that tool, which cannot be approved in a
+    // non-interactive session, and the permission meta-reply was saved as the
+    // module output. --strict-mcp-config with an empty config drops configured
+    // servers; ENABLE_CLAUDEAI_MCP_SERVERS=false drops claude.ai connectors.
+    // Likewise the user's own Claude Code context: their CLAUDE.md, settings,
+    // plugins and whatever project the bridge was launched from. Skipping the
+    // "user" setting source and running in an empty directory keeps a module
+    // run to the prompt SeanPropApp sent (auth is unaffected).
+    const args = [
+      "--print", "--model", cliModel,
+      "--strict-mcp-config", "--mcp-config", EMPTY_MCP_CONFIG,
+      "--setting-sources", "project,local",
+    ];
     if (request.system) {
       args.push("--system-prompt", request.system);
     }
@@ -169,6 +196,8 @@ export class ClaudeProvider implements Provider {
 
     const child = this.deps.spawnFn(detected.binary, args, {
       stdio: ["pipe", "pipe", "pipe"],
+      cwd: cleanWorkingDir(),
+      env: { ...process.env, ENABLE_CLAUDEAI_MCP_SERVERS: "false" },
     });
 
     const stderrChunks: string[] = [];
