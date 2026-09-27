@@ -2,6 +2,12 @@
 
 All notable changes to this CLI are recorded here. The format is loosely Keep a Changelog; we add structure once the release cadence demands it.
 
+## 0.1.0-beta.17
+
+### Fixed
+
+- **Bridge Max ran Sonnet while the app said Fable.** `mapToClaudeCliModel` matched model ids by substring and sent anything without "opus" or "haiku" to `sonnet`, so proposition-app's Max tier (`claude-fable-5`, now `claude-fable-5-1`) ran Sonnet on the subscription while the output's provenance named Fable. The same mapping collapsed the Deep fallback rungs (`claude-opus-5`, `claude-opus-4-8`) back to `opus`, so a fallback retried the same alias. Full `claude-*` ids now pass to `claude --model` verbatim; the bare aliases and the legacy `subscription` fallback are unchanged. An id the installed Claude Code does not know fails with the CLI's own explanation instead of silently running a different model. Verified against the real CLI: a Max request spawns `--model claude-fable-5-1`. The shared bridge contract fixture gains the Max tier and the ladder ids. (proposition-app#708)
+
 ## 0.1.0-beta.7
 
 ### Fixed

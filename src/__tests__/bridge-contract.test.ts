@@ -5,6 +5,7 @@ import type { Provider, AnthropicSSEEvent } from "../providers/base.js";
 import {
   BRIDGE_TIER_MODELS,
   BRIDGE_MODEL_NAMES,
+  BRIDGE_FULL_MODEL_IDS,
   SAMPLE_MESSAGES_REQUEST,
   SAMPLE_RERUN_MESSAGES_REQUEST,
   RERUN_REQUIRED_PROMPT_SUBSTRINGS,
@@ -26,6 +27,13 @@ describe("bridge contract (CLI side)", () => {
     expect(mapToClaudeCliModel(BRIDGE_TIER_MODELS.deep)).toBe("opus");
     expect(mapToClaudeCliModel(BRIDGE_TIER_MODELS.standard)).toBe("sonnet");
     expect(mapToClaudeCliModel(BRIDGE_TIER_MODELS.quick)).toBe("haiku");
+    expect(mapToClaudeCliModel(BRIDGE_TIER_MODELS.max)).toBe("claude-fable-5-1");
+  });
+
+  it("passes the Max model and every Deep ladder rung to the CLI verbatim", () => {
+    for (const id of BRIDGE_FULL_MODEL_IDS) {
+      expect(mapToClaudeCliModel(id)).toBe(id);
+    }
   });
 
   it("accepts the browser's canonical /v1/messages request shape (200, not 400)", async () => {

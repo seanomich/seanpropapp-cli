@@ -30,8 +30,9 @@ const DEFAULT_BINARY = "claude";
  *
  * Inputs we handle:
  *   - Bare CLI tier names (opus / sonnet / haiku) -> passthrough
- *   - Anthropic API model IDs (claude-opus-4-7, claude-sonnet-4-6,
- *     claude-haiku-4-5-...) -> matched by substring
+ *   - Full Anthropic model IDs (claude-fable-5-1, claude-opus-5,
+ *     claude-haiku-4-5-...) -> passthrough, verbatim
+ *   - Other strings naming a tier (e.g. "Opus") -> matched by substring
  *   - The literal 'subscription' that proposition-app's
  *     src/lib/llm/models.ts has historically sent for all three
  *     local_bridge tiers -> default to 'sonnet' (the balanced tier
@@ -44,11 +45,19 @@ const DEFAULT_BINARY = "claude";
  * 'subscription' will stop appearing in real traffic. The mapping stays as a
  * safety net for older clients.
  */
-export function mapToClaudeCliModel(model: string): "opus" | "sonnet" | "haiku" {
-  const normalized = model.toLowerCase();
+export function mapToClaudeCliModel(model: string): string {
+  const normalized = model.trim().toLowerCase();
   if (normalized === "opus" || normalized === "sonnet" || normalized === "haiku") {
     return normalized;
   }
+  // A full Anthropic model id goes to `claude --model` verbatim. The CLI
+  // accepts full ids, and mapping them onto an alias is lossy: bridge Max sends
+  // claude-fable-5-1, which the old substring match sent to 'sonnet' (Max ran
+  // Sonnet while the app's provenance said Fable), and the Deep fallback rungs
+  // claude-opus-5 / claude-opus-4-8 all collapsed back to 'opus'. An id this
+  // Claude Code version does not know fails the run with the CLI's own
+  // explanation rather than silently running a different model.
+  if (/^claude-[a-z0-9.-]+$/.test(normalized)) return normalized;
   if (normalized.includes("opus")) return "opus";
   if (normalized.includes("haiku")) return "haiku";
   // 'sonnet', 'subscription', 'claude-sonnet-*', and unrecognized values all
@@ -145,8 +154,8 @@ export class ClaudeProvider implements Provider {
       });
     }
 
-    // Translate whatever the browser sent into one of Claude CLI's three
-    // accepted tier names (opus | sonnet | haiku). Passing the abstract
+    // Translate whatever the browser sent into a model the Claude CLI accepts:
+    // an alias (opus | sonnet | haiku) or a full claude-* id. Passing the abstract
     // 'subscription' that proposition-app/src/lib/llm/models.ts has been
     // emitting causes Claude CLI to exit with:
     //   "There's an issue with the selected model (subscription). It may

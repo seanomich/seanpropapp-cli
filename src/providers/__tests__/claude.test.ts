@@ -37,10 +37,20 @@ describe("claude provider — helpers", () => {
       expect(mapToClaudeCliModel("OPUS")).toBe("opus");
       expect(mapToClaudeCliModel("Sonnet")).toBe("sonnet");
     });
-    it("maps Anthropic API model IDs to the matching tier", () => {
-      expect(mapToClaudeCliModel("claude-opus-4-7")).toBe("opus");
-      expect(mapToClaudeCliModel("claude-sonnet-4-6")).toBe("sonnet");
-      expect(mapToClaudeCliModel("claude-haiku-4-5-20251001")).toBe("haiku");
+    // proposition-app v1.15.0 (#708): bridge Max sends claude-fable-5-1 and the
+    // Deep fallback ladder sends claude-opus-5 then claude-opus-4-8. The old
+    // substring mapping sent Fable to 'sonnet' (so Max ran Sonnet while the
+    // provenance said Fable) and collapsed every Opus rung back to 'opus'.
+    // `claude --model` accepts full ids, so they pass through verbatim.
+    it("passes full claude-* model IDs through verbatim, so Max really runs Fable", () => {
+      expect(mapToClaudeCliModel("claude-fable-5-1")).toBe("claude-fable-5-1");
+      expect(mapToClaudeCliModel("claude-fable-5")).toBe("claude-fable-5");
+      expect(mapToClaudeCliModel("claude-opus-5")).toBe("claude-opus-5");
+      expect(mapToClaudeCliModel("claude-opus-4-8")).toBe("claude-opus-4-8");
+      expect(mapToClaudeCliModel("claude-haiku-4-5-20251001")).toBe("claude-haiku-4-5-20251001");
+    });
+    it("lower-cases a full id before passing it through", () => {
+      expect(mapToClaudeCliModel("Claude-Fable-5-1")).toBe("claude-fable-5-1");
     });
     it("maps the literal 'subscription' to 'sonnet' (the bug catcher)", () => {
       expect(mapToClaudeCliModel("subscription")).toBe("sonnet");
