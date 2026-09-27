@@ -2,6 +2,15 @@
 
 All notable changes to this CLI are recorded here. The format is loosely Keep a Changelog; we add structure once the release cadence demands it.
 
+## 0.1.0-beta.18
+
+### Fixed
+
+- **A module run could be replaced by a tool-permission message.** The bridge started `claude --print` with the user's full MCP configuration, including claude.ai connectors. With the SeanPropApp connector connected, a prompt such as "Run the Company Context module" led the model to call that tool, which cannot be approved in a non-interactive run, and the reply ("The SeanPropApp tool requires permission to run...") was saved as the module output and fed downstream. Module runs now start Claude with `--strict-mcp-config` and an empty MCP config, and with `ENABLE_CLAUDEAI_MCP_SERVERS=false`. (#39)
+- **The user's own Claude Code context leaked into module runs.** The CLI inherited the folder the bridge was launched from and the user's personal settings (CLAUDE.md, plugins), which could steer a run (from inside a code repo, a module answered about that codebase). Module runs now use an empty working directory and skip the user setting source; authentication is unaffected.
+
+Verified against the real `claude` binary: without the flags the model lists the SeanPropApp and other claude.ai connector tools; with them it lists none, and three consecutive runs of the triggering prompt, launched from inside a code repo, all returned analysis.
+
 ## 0.1.0-beta.17
 
 ### Fixed

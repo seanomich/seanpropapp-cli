@@ -191,6 +191,39 @@ describe("claude provider — stream()", () => {
     expect(events.at(-1)?.type).toBe("message_stop");
   });
 
+  // seanpropapp-cli#39: the bridge spawned `claude --print` with the user's
+  // full MCP configuration, including claude.ai connectors. With the SeanPropApp
+  // connector present the model called it instead of writing the module, and the
+  // "tool requires permission" meta-reply was saved as the module output. A
+  // module run must never see the user's MCP servers.
+  it("spawns claude with no user MCP servers (strict empty config, claude.ai connectors off)", async () => {
+    let seen: { args: string[]; opts: { env?: Record<string, string | undefined> } } | undefined;
+    const provider = new ClaudeProvider({
+      whichFn: async () => "/usr/local/bin/claude",
+      runCaptureFn: async () => ({ code: 0, stdout: "claude 1.0.5", stderr: "" }),
+      spawnFn: ((_bin: string, args: string[], opts: never) => {
+        seen = { args, opts };
+        return new FakeChildProcess({ stdoutChunks: ["ok"], exitCode: 0 });
+      }) as never,
+    });
+    await collect(provider.stream({ model: "opus", messages: [{ role: "user", content: "Run the Company Context module." }] }));
+    const args = seen!.args;
+    expect(args).toContain("--strict-mcp-config");
+    const i = args.indexOf("--mcp-config");
+    expect(i).toBeGreaterThan(-1);
+    expect(JSON.parse(args[i + 1]!)).toEqual({ mcpServers: {} });
+    expect(seen!.opts.env?.ENABLE_CLAUDEAI_MCP_SERVERS).toBe("false");
+    // And none of the user's own Claude Code context: no user setting source
+    // (CLAUDE.md, plugins), and an empty working directory, not the folder the
+    // bridge was launched from.
+    const j = args.indexOf("--setting-sources");
+    expect(args[j + 1]).toBe("project,local");
+    expect((seen!.opts as { cwd?: string }).cwd).toMatch(/seanpropapp-bridge-run$/);
+    expect((seen!.opts as { cwd?: string }).cwd).not.toBe(process.cwd());
+    // The rest of the environment still reaches the CLI (auth, PATH).
+    expect(seen!.opts.env?.PATH).toBe(process.env.PATH);
+  });
+
   it("writes the FULL multi-turn conversation to the CLI stdin (not just the last turn)", async () => {
     let child: FakeChildProcess | undefined;
     const provider = new ClaudeProvider({
