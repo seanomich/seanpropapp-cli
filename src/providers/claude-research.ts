@@ -114,6 +114,7 @@ export function translateResearchEvent(
     is_error?: boolean;
     result?: unknown;
     usage?: { output_tokens?: number; input_tokens?: number };
+    modelUsage?: unknown;
   };
   const out: AnthropicSSEEvent[] = [];
 
@@ -190,14 +191,40 @@ export function translateResearchEvent(
   }
 
   if (e.type === "result") {
+    const total = totalUsage(e.modelUsage);
     state.final = {
       text: typeof e.result === "string" ? e.result : "",
       isError: e.is_error === true,
-      outputTokens: e.usage?.output_tokens ?? 0,
-      inputTokens: e.usage?.input_tokens ?? 0,
+      outputTokens: total?.output ?? e.usage?.output_tokens ?? 0,
+      inputTokens: total?.input ?? e.usage?.input_tokens ?? 0,
     };
   }
   return out;
+}
+
+/**
+ * Whole-run token totals from the result event's `modelUsage`.
+ *
+ * `usage.input_tokens` is NOT the run's input: measured on a real research run
+ * it read 26 while the run had consumed thousands, because it excludes cached
+ * input and covers only part of a multi-step run. `modelUsage` is per model
+ * across every step, with cache reads and writes reported separately, so the
+ * run's real input is the three added together.
+ */
+export function totalUsage(modelUsage: unknown): { input: number; output: number } | null {
+  if (!modelUsage || typeof modelUsage !== "object") return null;
+  let input = 0;
+  let output = 0;
+  let seen = false;
+  for (const m of Object.values(modelUsage as Record<string, unknown>)) {
+    if (!m || typeof m !== "object") continue;
+    const u = m as Record<string, unknown>;
+    const n = (k: string) => (typeof u[k] === "number" ? (u[k] as number) : 0);
+    input += n("inputTokens") + n("cacheReadInputTokens") + n("cacheCreationInputTokens");
+    output += n("outputTokens");
+    seen = true;
+  }
+  return seen ? { input, output } : null;
 }
 
 /**

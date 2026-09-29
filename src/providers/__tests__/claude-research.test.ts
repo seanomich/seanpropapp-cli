@@ -174,6 +174,23 @@ describe("claude research — translateResearchEvent", () => {
     expect(state.final).toEqual({ text: RESULT_OK.result, isError: false, outputTokens: 617, inputTokens: 5283 });
   });
 
+  // Measured on a real run: usage.input_tokens read 26 for a run that consumed
+  // thousands of input tokens, because it leaves out cached input.
+  it("reports whole-run tokens from modelUsage, cache reads and writes included", () => {
+    const state = newResearchParseState();
+    translateResearchEvent(
+      {
+        ...RESULT_OK,
+        usage: { input_tokens: 26, output_tokens: 617 },
+        modelUsage: {
+          "claude-haiku-4-5-20251001": { inputTokens: 460, cacheReadInputTokens: 12000, cacheCreationInputTokens: 4000, outputTokens: 952 },
+        },
+      },
+      state,
+    );
+    expect(state.final).toMatchObject({ inputTokens: 16460, outputTokens: 952 });
+  });
+
   it("ignores system, thinking and rate-limit events, and malformed input", () => {
     const state = newResearchParseState();
     for (const evt of [{ type: "system", subtype: "init" }, { type: "rate_limit_event" }, null, "text", 7, { type: "assistant" }]) {
