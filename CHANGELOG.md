@@ -2,6 +2,19 @@
 
 All notable changes to this CLI are recorded here. The format is loosely Keep a Changelog; we add structure once the release cadence demands it.
 
+## 0.1.0-beta.19
+
+### Added
+
+- **Live web research in module runs.** When the app sends `research` on a `/v1/messages` request, the Claude provider starts Claude Code with its WebSearch and WebFetch tools permitted (`--tools "WebSearch,WebFetch"`, so a research run still cannot read files or run commands) and re-emits what the CLI did in the wire shape the Anthropic Messages API uses for its server-side web tools: `server_tool_use`, `web_search_tool_result` and `web_fetch_tool_result` blocks, followed by the final answer as the only text. The app builds its retrieval ledger from those blocks. Only URLs, titles and retrieval times are forwarded, never page content. A fetch that returned a non-2xx status is reported as `url_not_accessible`: Claude Code reports a 404 as an ordinary tool result, so reading only `is_error` would have recorded an unread page as a retrieved source. (proposition-app#716)
+- **`capabilities.research` in the handshake** lists the installed providers that can research (`["claude"]`). Codex is not listed yet.
+
+### Unchanged
+
+- A request WITHOUT `research` spawns Claude with exactly the arguments beta.18 used, pinned by a test. The search and fetch budgets are advisory on the bridge (the app states them in the prompt): Claude Code has no per-tool call cap.
+
+Verified against the real `claude` binary (Claude Code 2.1.285): a research run on Haiku searched, fetched a page, and returned an answer citing the fetched URL in about 16 seconds.
+
 ## 0.1.0-beta.18
 
 ### Fixed

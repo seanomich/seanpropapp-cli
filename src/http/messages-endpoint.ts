@@ -28,6 +28,14 @@ const MessagesRequestSchema = z.object({
     .min(1),
   stream: z.boolean().optional(),
   temperature: z.number().optional(),
+  // proposition-app#716. Optional and additive: a client that does not send it
+  // gets exactly the run it got before.
+  research: z
+    .object({
+      max_searches: z.number().int().nonnegative().optional(),
+      max_fetches: z.number().int().nonnegative().optional(),
+    })
+    .optional(),
 });
 
 export type MessagesRequest = z.infer<typeof MessagesRequestSchema>;

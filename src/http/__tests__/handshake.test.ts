@@ -55,6 +55,28 @@ describe("handshake", () => {
     expect(body.device_name.length).toBeGreaterThan(0);
   });
 
+  // proposition-app#716: the app asks for research only when the bridge says a
+  // provider that is actually installed can do it.
+  it("advertises research for installed providers that support it, and no others", async () => {
+    const both = createApp({
+      token: "tok",
+      providers: { claude: fakeProvider("claude", true), codex: fakeProvider("codex", true) },
+    });
+    const a = (await (await both.request("/v1/handshake", { headers: { Authorization: "Bearer tok" } })).json()) as {
+      capabilities: { research: string[] };
+    };
+    expect(a.capabilities.research).toEqual(["claude"]);
+
+    const codexOnly = createApp({
+      token: "tok",
+      providers: { claude: fakeProvider("claude", false), codex: fakeProvider("codex", true) },
+    });
+    const b = (await (await codexOnly.request("/v1/handshake", { headers: { Authorization: "Bearer tok" } })).json()) as {
+      capabilities: { research: string[] };
+    };
+    expect(b.capabilities.research).toEqual([]);
+  });
+
   it("returns paired_at null when not paired", async () => {
     const app = createApp({
       token: "tok",
