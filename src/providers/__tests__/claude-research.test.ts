@@ -309,6 +309,33 @@ describe("claude provider — research run", () => {
     expect(error?.category).toBe("cli_crashed");
   });
 
+  // The research (stream-json) path. A real spent-window run on this path was
+  // seen only as `cli_crashed` after 1,958 ms in the bridge log (2026-10-03);
+  // its stdout was not captured. So BOTH shapes the CLI could have used are
+  // pinned here, with the real sentence: INFERRED shapes, real text.
+  const SESSION_LIMIT = "You've hit your session limit · resets 10:10pm (Europe/London)";
+
+  it("classifies a spent session window printed as plain text (inferred shape)", async () => {
+    const { error, events } = await collect(
+      provider([SESSION_LIMIT + "\n"], 1).stream({ model: "sonnet", messages: [{ role: "user", content: "x" }], research: {} }),
+    );
+    expect(error?.category).toBe("subscription_limit");
+    expect(error?.resetsAt).toBe("10:10pm (Europe/London)");
+    expect(events.filter((e) => e.type === "content_block_delta")).toEqual([]);
+    expect(events.some((e) => e.type === "message_stop")).toBe(false);
+  });
+
+  it("classifies a spent session window reported in the result event (inferred shape)", async () => {
+    const { error, events } = await collect(
+      provider([jsonl({ type: "result", subtype: "success", is_error: true, result: SESSION_LIMIT })], 1).stream({
+        model: "sonnet", messages: [{ role: "user", content: "x" }], research: {},
+      }),
+    );
+    expect(error?.category).toBe("subscription_limit");
+    expect(error?.resetsAt).toBe("10:10pm (Europe/London)");
+    expect(events.filter((e) => e.type === "content_block_delta")).toEqual([]);
+  });
+
   it("keeps plain-text CLI output as failure evidence on a non-zero exit", async () => {
     const { error } = await collect(
       provider(["There's an issue with the selected model (nope).\n"], 1).stream({ model: "haiku", messages: [{ role: "user", content: "x" }], research: {} }),

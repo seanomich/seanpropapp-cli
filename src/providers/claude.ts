@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { detectRateLimit, parseRetryAfter, classifyThrottle, throttleHeadline } from "./rate-limit-detect.js";
+import { detectRateLimit, parseRetryAfter, parseResetTime, classifyThrottle, throttleHeadline } from "./rate-limit-detect.js";
 export { detectRateLimit, parseRetryAfter };
 import { spawn } from "node:child_process";
 import {
@@ -269,16 +269,22 @@ export class ClaudeProvider implements Provider {
       // model's own prose. That is what killed two production runs on the
       // Competitive Landscape module. Classification happens ONLY after a
       // non-zero exit, below.
+      //
+      // And NOTHING is sent to the client until the exit code is known. The CLI
+      // reports a failure by printing it on stdout and exiting 1 (a spent
+      // session window prints "You've hit your session limit · resets 10:10pm
+      // (Europe/London)"). Forwarding stdout as it arrived sent that sentence
+      // to the app as the first text of the module and THEN an error event,
+      // so the client saw content and a failure for the same run. Since the
+      // whole answer is one chunk at the end anyway, holding it for the exit
+      // code costs no latency.
+      const held: string[] = [];
       if (!research && child.stdout) {
         for await (const chunk of child.stdout as AsyncIterable<Buffer | string>) {
           const text = typeof chunk === "string" ? chunk : chunk.toString();
           if (text.length === 0) continue;
           totalOut += text;
-          yield {
-            type: "content_block_delta",
-            index: 0,
-            delta: { type: "text_delta", text },
-          };
+          held.push(text);
         }
       }
 
@@ -316,6 +322,8 @@ export class ClaudeProvider implements Provider {
             {
               category: throttle,
               retryAfterSeconds: parseRetryAfter(evidence),
+              // Only the user's own window has a reset to wait for.
+              resetsAt: throttle === "subscription_limit" ? parseResetTime(evidence) : undefined,
               provider: this.name,
             },
           );
@@ -326,6 +334,11 @@ export class ClaudeProvider implements Provider {
           `Claude CLI exited with code ${exitCode}: ${(evidence || "(no output)").slice(0, 500)}`,
           { category: "cli_crashed", provider: this.name },
         );
+      }
+
+      // The run succeeded: now, and only now, the answer goes to the client.
+      for (const text of held) {
+        yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } };
       }
 
       if (research && researchState.final) {

@@ -63,6 +63,7 @@ function errorEventBytes(err: ClassifiedError): Uint8Array {
       category: err.category,
       message: err.message,
       retry_after_seconds: err.retryAfterSeconds,
+      ...(err.resetsAt ? { resets_at: err.resetsAt } : {}),
     },
   });
 }

@@ -322,6 +322,62 @@ describe("claude provider — stream()", () => {
     expect(error?.message).not.toMatch(/subscription/i);
   });
 
+  // VERBATIM from a real run, 2026-10-03, plain --print path: the CLI printed
+  // this on stdout and exited 1. The bridge reported `cli_crashed`, and because
+  // stdout was forwarded as it arrived, the app received the sentence as the
+  // first text of the module and then an error for the same run.
+  const SESSION_LIMIT = "You've hit your session limit · resets 10:10pm (Europe/London)";
+
+  it("classifies a spent session window as subscription_limit, with the reset time, and sends none of it as text", async () => {
+    const provider = new ClaudeProvider({
+      whichFn: async () => "/usr/local/bin/claude",
+      runCaptureFn: async () => ({ code: 0, stdout: "", stderr: "" }),
+      spawnFn: (() => new FakeChildProcess({ stdoutChunks: [SESSION_LIMIT + "\n"], exitCode: 1 })) as never,
+    });
+    const { events, error } = await collect(
+      provider.stream({ model: "claude-sonnet-5", messages: [{ role: "user", content: "hi" }] }),
+    );
+    expect(error).toBeInstanceOf(ClassifiedError);
+    expect(error?.category).toBe("subscription_limit");
+    expect(error?.resetsAt).toBe("10:10pm (Europe/London)");
+    expect(error?.message).toContain("session limit");
+    // The limit sentence never reaches the client as module text.
+    expect(events.filter((e) => e.type === "content_block_delta")).toEqual([]);
+    // And the stream did not also report success.
+    expect(events.some((e) => e.type === "message_stop")).toBe(false);
+  });
+
+  it("holds the answer until the exit code is known, then sends all of it in order", async () => {
+    const provider = new ClaudeProvider({
+      whichFn: async () => "/usr/local/bin/claude",
+      runCaptureFn: async () => ({ code: 0, stdout: "", stderr: "" }),
+      spawnFn: (() => new FakeChildProcess({ stdoutChunks: ["First. ", "Second. ", "Third."], exitCode: 0 })) as never,
+    });
+    const { events, error } = await collect(
+      provider.stream({ model: "claude-sonnet-5", messages: [{ role: "user", content: "hi" }] }),
+    );
+    expect(error).toBeUndefined();
+    const text = events.map((e) => (e.type === "content_block_delta" ? e.delta.text : "")).join("");
+    expect(text).toBe("First. Second. Third.");
+    expect(events.map((e) => e.type).filter((t) => t !== "content_block_delta")).toEqual([
+      "message_start", "content_block_start", "content_block_stop", "message_delta", "message_stop",
+    ]);
+  });
+
+  it("a failed run of any kind sends no text: a crash explanation is evidence, not content", async () => {
+    const provider = new ClaudeProvider({
+      whichFn: async () => "/usr/local/bin/claude",
+      runCaptureFn: async () => ({ code: 0, stdout: "", stderr: "" }),
+      spawnFn: (() => new FakeChildProcess({ stdoutChunks: ["There's an issue with the selected model (nope).\n"], exitCode: 1 })) as never,
+    });
+    const { events, error } = await collect(
+      provider.stream({ model: "nope", messages: [{ role: "user", content: "hi" }] }),
+    );
+    expect(error?.category).toBe("cli_crashed");
+    expect(error?.resetsAt).toBeUndefined();
+    expect(events.filter((e) => e.type === "content_block_delta")).toEqual([]);
+  });
+
   it("throws ClassifiedError(cli_missing) when CLI not installed", async () => {
     const provider = new ClaudeProvider({
       whichFn: async () => null,
