@@ -149,6 +149,7 @@ export function makeChatCompletionsHandler(deps: ChatCompletionsDeps) {
             message,
             retry_after_seconds:
               err instanceof ClassifiedError ? err.retryAfterSeconds : undefined,
+            resets_at: err instanceof ClassifiedError ? err.resetsAt : undefined,
           },
         };
         // See messages-endpoint.ts: this write can land on an already-dead

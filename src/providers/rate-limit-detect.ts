@@ -64,6 +64,14 @@ const SUBSCRIPTION_PATTERNS: RegExp[] = [
   /\bexceeded\s+(?:your\s+)?(?:current\s+)?(?:usage|subscription|plan)\s+limits?\b/i,
   // A reset time is only ever quoted for a window cap.
   /\blimits?\s+will\s+reset\s+(?:at|in)\b/i,
+  // Claude Code's current wording for the 5-hour window, verbatim from a real
+  // run on 2026-10-03: "You've hit your session limit · resets 10:10pm
+  // (Europe/London)". None of the patterns above read it (the verb is "hit",
+  // the noun is "session", the reset is "resets"), so the run was reported as
+  // `cli_crashed` and the app showed a crash to a user whose window was spent.
+  /\b(?:hit|reached|exceeded)\s+(?:your\s+|the\s+)?(?:current\s+)?(?:session|usage|weekly|daily|hourly|5-hour|opus|sonnet)\s+limits?\b/i,
+  // The same family names a reset straight after the limit.
+  /\blimits?\b[^\n]{0,24}\bresets\s+(?:at\s+|in\s+)?\d/i,
   /\bupgrade\s+(?:your\s+)?plan\b/i,
 ];
 
@@ -145,4 +153,18 @@ export function parseRetryAfter(text: string): number | undefined {
     }
   }
   return undefined;
+}
+
+/**
+ * When the window resets, as the CLI wrote it: "10:10pm (Europe/London)",
+ * "3am", "at 14:30". Passed to the client verbatim so the app can tell the user
+ * when to come back; it is not parsed into a time, because the CLI states it in
+ * the user's own zone and a guess at the date would be wrong across midnight.
+ */
+export function parseResetTime(text: string): string | undefined {
+  const m = /\bresets?\s+(?:at\s+)?(\d{1,2}(?::\d{2})?\s?(?:am|pm)?(?:\s*\([^)\n]{1,40}\))?)/i.exec(text);
+  if (!m) return undefined;
+  const when = m[1].trim();
+  // A bare number with neither minutes nor am/pm is not a time of day ("resets 5 ...").
+  return /:\d{2}|am|pm/i.test(when) ? when : undefined;
 }

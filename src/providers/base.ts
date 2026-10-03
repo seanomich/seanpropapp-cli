@@ -77,6 +77,9 @@ export type AnthropicSSEEvent =
         category?: ClassifiedError["category"];
         message: string;
         retry_after_seconds?: number;
+        /** ADDITIVE: when a subscription window resets, as the CLI wrote it
+         *  ("10:10pm (Europe/London)"). Present only when the CLI said. */
+        resets_at?: string;
       };
     };
 
@@ -126,6 +129,8 @@ export class ClassifiedError extends Error {
     | "short_output"
     | "unknown";
   public readonly retryAfterSeconds?: number;
+  /** When the user's window resets, verbatim from the CLI, when it said. */
+  public readonly resetsAt?: string;
   public readonly provider?: string;
 
   constructor(
@@ -133,6 +138,7 @@ export class ClassifiedError extends Error {
     opts: {
       category: ClassifiedError["category"];
       retryAfterSeconds?: number;
+      resetsAt?: string;
       provider?: string;
     },
   ) {
@@ -140,6 +146,7 @@ export class ClassifiedError extends Error {
     this.name = "ClassifiedError";
     this.category = opts.category;
     this.retryAfterSeconds = opts.retryAfterSeconds;
+    this.resetsAt = opts.resetsAt;
     this.provider = opts.provider;
   }
 }

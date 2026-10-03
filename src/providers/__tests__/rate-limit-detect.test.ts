@@ -23,6 +23,7 @@ import {
   parseRetryAfter,
   classifyThrottle,
   throttleHeadline,
+  parseResetTime,
 } from "../rate-limit-detect.js";
 
 describe("detectRateLimit: real refusals still detected", () => {
@@ -198,5 +199,48 @@ describe('throttleHeadline states the actual cause', () => {
     for (const k of ['subscription_limit', 'rate_limited', 'overloaded'] as const) {
       expect(throttleHeadline(k, 'Claude')).not.toMatch(/—|–/);
     }
+  });
+});
+
+/**
+ * The string below is VERBATIM from a real run on 2026-10-03 (Claude Code
+ * through the bridge, plain --print path, exit 1): it is what the CLI prints
+ * when the 5-hour session window is spent. It was classified `cli_crashed`.
+ */
+const SESSION_LIMIT = "You've hit your session limit · resets 10:10pm (Europe/London)";
+
+describe('a spent session window (proposition-app#716 follow-up)', () => {
+  it('is the user\'s own allowance, not a crash and not provider throttling', () => {
+    expect(classifyThrottle(SESSION_LIMIT)).toBe('subscription_limit');
+    // As the provider reports it, with the exit prefix the bridge adds.
+    expect(classifyThrottle('Claude CLI exited with code 1: ' + SESSION_LIMIT)).toBe('subscription_limit');
+    expect(detectRateLimit(SESSION_LIMIT)).toBe(true);
+  });
+
+  it('reads the sibling wordings of the same family', () => {
+    // Not captured from a real run: plausible variants of the same message.
+    for (const t of [
+      "You've hit your weekly limit · resets 9am (Europe/London)",
+      "You've reached your usage limit · resets 3:00pm",
+      'You have hit your Opus limit · resets 11pm',
+      'Session limit reached · resets 10:10pm',
+    ]) {
+      expect(classifyThrottle(t), t).toBe('subscription_limit');
+    }
+  });
+
+  it('still tells it apart from provider throttling and overload', () => {
+    expect(classifyThrottle('Rate limit exceeded. Retry-After: 30')).toBe('rate_limited');
+    expect(classifyThrottle('529 Overloaded')).toBe('overloaded');
+    expect(classifyThrottle('The session ended normally.')).toBeNull();
+    expect(classifyThrottle('The speed limit resets nothing.')).toBeNull();
+  });
+
+  it('passes the reset time through as the CLI wrote it', () => {
+    expect(parseResetTime(SESSION_LIMIT)).toBe('10:10pm (Europe/London)');
+    expect(parseResetTime('Usage limit reached. Your limits will reset at 3am.')).toBe('3am');
+    expect(parseResetTime("You've reached your usage limit · resets 15:00")).toBe('15:00');
+    expect(parseResetTime('Rate limit exceeded. Retry-After: 30')).toBeUndefined();
+    expect(parseResetTime('The counter resets 5 times a day.')).toBeUndefined();
   });
 });
