@@ -19,6 +19,11 @@ import {
   DEFAULT_BRIDGE_PORT,
   MAX_PORT_FALLBACK,
 } from "../http/server.js";
+import {
+  readBridgePid,
+  bridgePidAgeMs,
+  isProcessAlive,
+} from "./bridge-pid.js";
 import { CLI_VERSION } from "../version.js";
 
 export interface DoctorOptions {
@@ -191,6 +196,24 @@ export async function runDoctor(
   }
   section("Config", configLines);
 
+  // 4b. Bridge process (PID file written by the running bridge, #1).
+  const processLines: string[] = [];
+  const bridgePid = await readBridgePid(opts.configDir);
+  if (bridgePid === null) {
+    processLines.push(
+      "No running bridge recorded. Start one with: `seanpropapp connect`.",
+    );
+  } else if (isProcessAlive(bridgePid)) {
+    const ageMs = await bridgePidAgeMs(opts.configDir);
+    const age = ageMs === null ? "unknown age" : fmtAge(ageMs);
+    processLines.push(`Running bridge PID ${bridgePid} (started ${age})`);
+  } else {
+    processLines.push(
+      `Stale PID ${bridgePid}: process is gone. Re-run \`seanpropapp connect\` to start a fresh bridge.`,
+    );
+  }
+  section("Bridge process", processLines);
+
   // 5. Bridge health check.
   const healthLines: string[] = [];
   if (cfg.bridge_url && cfg.pair_token) {
@@ -202,6 +225,27 @@ export async function runDoctor(
       });
       if (res.ok) {
         healthLines.push(`Bridge reachable at ${url} (HTTP ${res.status})`);
+        // Surface the bridge's OWN provider detection so the user can confirm
+        // it agrees with the local detection above (#2). The bridge detects at
+        // request time in its own environment, which is what the browser pair
+        // card reads; a mismatch here explains a "No CLI detected" card even
+        // when the local check found the CLI.
+        try {
+          const body = (await res.json()) as {
+            providers?: Record<string, { installed?: boolean }>;
+          };
+          if (body && body.providers) {
+            const reported = Object.entries(body.providers)
+              .map(([id, r]) => `${id}=${r?.installed ? "detected" : "not detected"}`)
+              .join(", ");
+            if (reported) {
+              healthLines.push(`Bridge reports providers: ${reported}`);
+            }
+          }
+        } catch {
+          // Non-JSON or unexpected body: skip the providers line, health is
+          // still reachable.
+        }
       } else if (res.status === 401) {
         healthLines.push(
           `Bridge reachable but rejected the saved pair token (HTTP 401). Re-pair with: \`seanpropapp connect\``,

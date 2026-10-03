@@ -14,6 +14,7 @@ import {
 import { planClaudeInstall, runInstall } from "./install-claude.js";
 import { confirm } from "./prompt.js";
 import { spawnBackgroundBridge } from "./bridge.js";
+import { reuseOrphanBridge } from "./orphan-bridge.js";
 import { emitConnectStart } from "../telemetry.js";
 
 const HANDSHAKE_TIMEOUT_MS = 60_000;
@@ -55,6 +56,10 @@ export interface ConnectOptions {
    * without an actual `dist/` build to spawn.
    */
   skipBridgeHealthcheck?: boolean;
+  /** Test seam: override the pair-wait timeout (ms). Defaults to 60s. */
+  handshakeTimeoutMs?: number;
+  /** Test seam: override the pair-wait poll interval (ms). Defaults to 1s. */
+  handshakePollMs?: number;
 }
 
 export interface ConnectResult {
@@ -173,8 +178,10 @@ export async function runConnect(
   // 3. Start bridge (background by default).
   let bridgePort: number;
   let stopInlineBridge: (() => Promise<void>) | undefined;
+  let reusedBridge = false;
 
   if (opts.noBridgeFork) {
+    let inlinePairRecorded = false;
     const running = await startServer({
       token,
       port: opts.port,
@@ -182,26 +189,49 @@ export async function runConnect(
         const cfg = await loadConfig(opts.configDir);
         return cfg.paired_at ?? null;
       },
+      // Record paired_at on the browser's pair confirmation (#3) so the poll
+      // loop below completes in inline mode too.
+      onBrowserPair: async () => {
+        if (inlinePairRecorded) return;
+        inlinePairRecorded = true;
+        await updateConfig(
+          { paired_at: new Date().toISOString() },
+          opts.configDir,
+        );
+      },
     } as never);
     bridgePort = running.port;
     stopInlineBridge = () => running.close();
   } else {
-    // Detached child. We still need to know what port it bound. Quick approach
-    // for v1.4.0: bind here just long enough to claim the port, then close
-    // and hand the port over to the child. This avoids a stdio handshake.
-    const probe = await startServer({
-      token,
-      port: opts.port,
-      pairedAt: () => null,
-    });
-    bridgePort = probe.port;
-    await probe.close();
-    await spawnBackgroundBridge({
-      port: bridgePort,
+    // First, detect + reset a bridge left running by a prior `connect` (#1).
+    // Reusing/resetting the orphan avoids spawning a SECOND bridge on the next
+    // free port with a token the already-open browser tab does not have.
+    const reuse = await reuseOrphanBridge({
       token,
       ...(opts.configDir ? { configDir: opts.configDir } : {}),
-      ...(opts.skipBridgeHealthcheck ? { skipHealthcheck: true } : {}),
+      stderr: err,
     });
+    if (reuse.action === "reused") {
+      bridgePort = reuse.port;
+      reusedBridge = true;
+    } else {
+      // Detached child. We still need to know what port it bound. Quick approach
+      // for v1.4.0: bind here just long enough to claim the port, then close
+      // and hand the port over to the child. This avoids a stdio handshake.
+      const probe = await startServer({
+        token,
+        port: opts.port,
+        pairedAt: () => null,
+      });
+      bridgePort = probe.port;
+      await probe.close();
+      await spawnBackgroundBridge({
+        port: bridgePort,
+        token,
+        ...(opts.configDir ? { configDir: opts.configDir } : {}),
+        ...(opts.skipBridgeHealthcheck ? { skipHealthcheck: true } : {}),
+      });
+    }
   }
 
   await updateConfig(
@@ -213,7 +243,11 @@ export async function runConnect(
     opts.configDir,
   );
 
-  out(`  Bridge ready on port ${bridgePort}\n`);
+  out(
+    reusedBridge
+      ? `  Reusing the running bridge on port ${bridgePort} (rotated pair token)\n`
+      : `  Bridge ready on port ${bridgePort}\n`,
+  );
 
   // 4. Print pair URL: clickable + plain (TX13).
   const url = pairUrl(token);
@@ -238,22 +272,33 @@ export async function runConnect(
     await updateConfig({ paired_at: opts.fakePairedAt }, opts.configDir);
     paired = true;
   } else {
-    const deadline = Date.now() + HANDSHAKE_TIMEOUT_MS;
+    const timeoutMs = opts.handshakeTimeoutMs ?? HANDSHAKE_TIMEOUT_MS;
+    const pollMs = opts.handshakePollMs ?? HANDSHAKE_POLL_MS;
+    const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const cfg = await loadConfig(opts.configDir);
-      if (cfg.paired_at) {
+      // Only count a pair recorded during THIS run. A stale paired_at from a
+      // prior session (which persists in config) must not short-circuit the
+      // wait, especially when reusing a bridge whose config still holds an old
+      // timestamp (#1 + #3).
+      if (cfg.paired_at && Date.parse(cfg.paired_at) >= t0) {
         paired = true;
         break;
       }
-      await new Promise((r) => setTimeout(r, HANDSHAKE_POLL_MS));
+      await new Promise((r) => setTimeout(r, pollMs));
     }
   }
 
   if (!paired) {
     if (stopInlineBridge) await stopInlineBridge();
+    // The bridge is still running and serving traffic. If the user clicked
+    // "Connect this device", pairing likely already succeeded; do NOT tell them
+    // to re-run `connect` (that would spawn a duplicate bridge, see #1/#3).
     err(
-      "\n  Timed out waiting for pairing (60s).\n" +
-        "  Either re-run `seanpropapp connect` or click the pair URL again.\n",
+      "\n  Still waiting after 60s.\n" +
+        "  If you clicked \"Connect this device\" in the browser, pairing may already have succeeded.\n" +
+        "  Check with: seanpropapp doctor\n" +
+        "  If not, click the pair URL above again (the bridge is still running; you do not need to run connect again).\n",
     );
     return {
       success: false,

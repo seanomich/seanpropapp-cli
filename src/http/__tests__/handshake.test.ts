@@ -81,4 +81,75 @@ describe("handshake", () => {
     const res = await app.request("/v1/handshake");
     expect(res.status).toBe(401);
   });
+
+  // #3: paired_at is recorded on the browser's pair confirmation only. The
+  // browser is cross-origin (carries an Origin header that cleared CORS); the
+  // parent's local healthcheck poll and doctor send no Origin.
+  it("fires onBrowserPair when the handshake carries an allowed Origin", async () => {
+    let pairs = 0;
+    const app = createApp({
+      token: "tok",
+      providers: { claude: fakeProvider("claude", true) },
+      onBrowserPair: () => {
+        pairs += 1;
+      },
+    });
+    const res = await app.request("/v1/handshake", {
+      headers: {
+        Authorization: "Bearer tok",
+        Origin: "https://seanpropapp.com",
+      },
+    });
+    expect(res.status).toBe(200);
+    expect(pairs).toBe(1);
+  });
+
+  it("does NOT fire onBrowserPair for a local (no-Origin) healthcheck", async () => {
+    let pairs = 0;
+    const app = createApp({
+      token: "tok",
+      providers: { claude: fakeProvider("claude", true) },
+      onBrowserPair: () => {
+        pairs += 1;
+      },
+    });
+    const res = await app.request("/v1/handshake", {
+      headers: { Authorization: "Bearer tok" },
+    });
+    expect(res.status).toBe(200);
+    expect(pairs).toBe(0);
+  });
+
+  // #2: detection runs at REQUEST time, so a provider that becomes installed
+  // after the server was constructed is still reported as installed.
+  it("reflects provider detection at request time, not server-start time", async () => {
+    let installed = false;
+    const flakyProvider: Provider = {
+      name: "claude",
+      detect: async () => ({
+        installed,
+        binary: installed ? "/usr/local/bin/claude" : undefined,
+      }),
+      async *stream() {
+        // no-op
+      },
+    };
+    const app = createApp({ token: "tok", providers: { claude: flakyProvider } });
+
+    const before = (await (
+      await app.request("/v1/handshake", {
+        headers: { Authorization: "Bearer tok" },
+      })
+    ).json()) as { providers: { claude: { installed: boolean } } };
+    expect(before.providers.claude.installed).toBe(false);
+
+    // Simulate the CLI being installed AFTER the bridge started.
+    installed = true;
+    const after = (await (
+      await app.request("/v1/handshake", {
+        headers: { Authorization: "Bearer tok" },
+      })
+    ).json()) as { providers: { claude: { installed: boolean } } };
+    expect(after.providers.claude.installed).toBe(true);
+  });
 });
