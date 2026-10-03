@@ -12,6 +12,12 @@ import {
   type ProviderDetectResult,
 } from "./base.js";
 import { runCapture, which } from "./detect-util.js";
+import {
+  LineBuffer,
+  newResearchParseState,
+  researchArgs,
+  translateResearchEvent,
+} from "./claude-research.js";
 
 /**
  * Override hooks for testing. The provider takes optional injectables so we
@@ -192,6 +198,11 @@ export class ClaudeProvider implements Provider {
     if (request.system) {
       args.push("--system-prompt", request.system);
     }
+    // proposition-app#716: a research run permits WebSearch and WebFetch and
+    // switches to stream-json so the bridge can report what was retrieved. A
+    // run WITHOUT `research` keeps exactly the arguments above.
+    const research = request.research !== undefined;
+    if (research) args.push(...researchArgs());
     const stdinPayload = buildClaudePrompt(request);
 
     const child = this.deps.spawnFn(detected.binary, args, {
@@ -216,14 +227,41 @@ export class ClaudeProvider implements Provider {
 
     const messageId = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     yield { type: "message_start", message: { id: messageId, model: request.model } };
-    yield {
-      type: "content_block_start",
-      index: 0,
-      content_block: { type: "text", text: "" },
-    };
+    // In a research run the tool blocks come first and the text block last, so
+    // its index is only known once the research is over.
+    if (!research) {
+      yield {
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "text", text: "" },
+      };
+    }
 
     try {
       let totalOut = "";
+      const researchState = newResearchParseState();
+      if (research && child.stdout) {
+        const lines = new LineBuffer();
+        const translate = (line: string): AnthropicSSEEvent[] => {
+          let evt: unknown;
+          try {
+            evt = JSON.parse(line);
+          } catch {
+            // Not JSON: keep it as failure evidence. The CLI prints a bad
+            // --model or an auth failure as plain text even in stream-json mode.
+            totalOut += line + "\n";
+            return [];
+          }
+          return translateResearchEvent(evt, researchState);
+        };
+        for await (const chunk of child.stdout as AsyncIterable<Buffer | string>) {
+          const text = typeof chunk === "string" ? chunk : chunk.toString();
+          for (const line of lines.push(text)) yield* translate(line);
+        }
+        for (const line of lines.flush()) yield* translate(line);
+        // The final answer is failure evidence too when the run reports an error.
+        if (researchState.final) totalOut += researchState.final.text;
+      }
       // NO rate-limit inspection of the content stream. `claude --print` is not
       // incremental: it emits the ENTIRE answer as a single stdout chunk (proven
       // by measurement, 1 chunk). So any "only look before real content arrives"
@@ -231,7 +269,7 @@ export class ClaudeProvider implements Provider {
       // model's own prose. That is what killed two production runs on the
       // Competitive Landscape module. Classification happens ONLY after a
       // non-zero exit, below.
-      if (child.stdout) {
+      if (!research && child.stdout) {
         for await (const chunk of child.stdout as AsyncIterable<Buffer | string>) {
           const text = typeof chunk === "string" ? chunk : chunk.toString();
           if (text.length === 0) continue;
@@ -250,7 +288,11 @@ export class ClaudeProvider implements Provider {
       });
 
       const stderr = stderrChunks.join("");
-      if (exitCode !== 0) {
+      // stream-json reports a failed run in its `result` event, and a run that
+      // produced no `result` at all did not finish, whatever the exit code says.
+      const researchFailed =
+        research && (researchState.final === null || researchState.final.isError);
+      if (exitCode !== 0 || researchFailed) {
         // The exit code is the ONLY trigger. Measured behaviour: the Claude CLI
         // reports failures on STDOUT with exit=1 and leaves stderr EMPTY (a bad
         // --model prints the explanation to stdout, stderr ""). So scanning
@@ -286,6 +328,26 @@ export class ClaudeProvider implements Provider {
         );
       }
 
+      if (research && researchState.final) {
+        const index = researchState.index;
+        yield { type: "content_block_start", index, content_block: { type: "text", text: "" } };
+        yield {
+          type: "content_block_delta",
+          index,
+          delta: { type: "text_delta", text: researchState.final.text },
+        };
+        yield { type: "content_block_stop", index };
+        yield {
+          type: "message_delta",
+          delta: { stop_reason: "end_turn" },
+          usage: {
+            output_tokens: researchState.final.outputTokens,
+            input_tokens: researchState.final.inputTokens,
+          },
+        };
+        yield { type: "message_stop" };
+        return;
+      }
       yield { type: "content_block_stop", index: 0 };
       yield {
         type: "message_delta",
