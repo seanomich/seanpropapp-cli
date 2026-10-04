@@ -8,6 +8,12 @@ import {
 } from "../claude.js";
 import { ClassifiedError, type AnthropicSSEEvent } from "../base.js";
 import { FakeChildProcess } from "./test-helpers.js";
+import { parsePlainResult } from "../claude-research.js";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 describe("claude provider — helpers", () => {
   it("detectRateLimit matches common patterns", () => {
@@ -376,6 +382,119 @@ describe("claude provider — stream()", () => {
     expect(error?.category).toBe("cli_crashed");
     expect(error?.resetsAt).toBeUndefined();
     expect(events.filter((e) => e.type === "content_block_delta")).toEqual([]);
+  });
+
+  // The plain (tool-less) path reported usage 0/0 because `claude --print`
+  // prints text only. It now asks for the JSON result. The two fixtures are
+  // REAL output of Claude Code 2.1.289, captured 2026-10-04 with the bridge's
+  // own flags (session id removed): a one-word answer, and a model that does
+  // not exist (exit 1).
+  describe("plain path: usage from the CLI's JSON result", () => {
+    const fixture = (name: string) =>
+      readFileSync(join(__dirname, "fixtures", `plain-result-${name}.json`), "utf8");
+    const providerWith = (stdoutChunks: string[], exitCode: number, onSpawn?: (args: string[]) => void) =>
+      new ClaudeProvider({
+        whichFn: async () => "/usr/local/bin/claude",
+        runCaptureFn: async () => ({ code: 0, stdout: "", stderr: "" }),
+        spawnFn: ((_bin: string, args: string[]) => {
+          onSpawn?.(args);
+          return new FakeChildProcess({ stdoutChunks, exitCode });
+        }) as never,
+      });
+    const run = (p: ClaudeProvider, research?: boolean) =>
+      collect(p.stream({
+        model: "claude-haiku-4-5", messages: [{ role: "user", content: "hi" }],
+        ...(research ? { research: { maxSearches: 1, maxFetches: 1 } } : {}),
+      } as never));
+
+    it("parsePlainResult reads the real success: the answer, and input that counts the cached tokens", () => {
+      const r = parsePlainResult(fixture("success"));
+      // usage.input_tokens alone is 9; the run consumed 9 + 14,976 cache creation.
+      expect(r).toEqual({ text: "pong", isError: false, inputTokens: 14985, outputTokens: 45 });
+    });
+
+    it("parsePlainResult reads the real failure as an error with the CLI's explanation", () => {
+      const r = parsePlainResult(fixture("bad-model"));
+      expect(r?.isError).toBe(true);
+      expect(r?.text).toContain("There's an issue with the selected model (nosuchmodel-zz)");
+      expect(r).toMatchObject({ inputTokens: 0, outputTokens: 0 });
+    });
+
+    it("parsePlainResult returns null for anything that is not the result object", () => {
+      expect(parsePlainResult("Hello world")).toBeNull();
+      expect(parsePlainResult("")).toBeNull();
+      expect(parsePlainResult('{"tam": "$9B"}')).toBeNull();
+      expect(parsePlainResult('{"type":"result"}')).toBeNull();
+      expect(parsePlainResult("{not json")).toBeNull();
+      // An array of events (some CLI versions): the result event is taken from it.
+      expect(parsePlainResult('[{"type":"system"},{"type":"result","result":"x","usage":{"input_tokens":3,"output_tokens":2}}]'))
+        .toEqual({ text: "x", isError: false, inputTokens: 3, outputTokens: 2 });
+    });
+
+    it("a plain run asks for JSON, sends the answer as text and reports the real usage", async () => {
+      let args: string[] = [];
+      // Split mid-object, as a pipe would.
+      const raw = fixture("success");
+      const { events, error } = await run(providerWith([raw.slice(0, 700), raw.slice(700)], 0, (a) => { args = a; }));
+      expect(error).toBeUndefined();
+      expect(args.slice(args.indexOf("--output-format"), args.indexOf("--output-format") + 2)).toEqual(["--output-format", "json"]);
+      const text = events.map((e) => (e.type === "content_block_delta" ? e.delta.text : "")).join("");
+      expect(text).toBe("pong");
+      const delta = events.find((e) => e.type === "message_delta");
+      expect(delta).toMatchObject({ usage: { output_tokens: 45, input_tokens: 14985 } });
+      expect(events.map((e) => e.type)).toEqual([
+        "message_start", "content_block_start", "content_block_delta", "content_block_stop", "message_delta", "message_stop",
+      ]);
+    });
+
+    it("a research run keeps stream-json and never gets the plain flag", async () => {
+      let args: string[] = [];
+      await run(providerWith([], 1, (a) => { args = a; }), true);
+      expect(args).toContain("stream-json");
+      expect(args).not.toContain("json");
+    });
+
+    it("the real failed run: classified from what the CLI said, and none of it sent as text", async () => {
+      const { events, error } = await run(providerWith([fixture("bad-model")], 1));
+      expect(error?.category).toBe("cli_crashed");
+      expect(error?.message).toContain("There's an issue with the selected model (nosuchmodel-zz)");
+      // The evidence is the explanation, not the JSON around it.
+      expect(error?.message).not.toContain("duration_api_ms");
+      expect(events.filter((e) => e.type === "content_block_delta")).toEqual([]);
+      expect(events.some((e) => e.type === "message_stop")).toBe(false);
+    });
+
+    it("a spent session window inside the JSON result is still subscription_limit with its reset time", async () => {
+      // Constructed: the real failure object with the real limit sentence in
+      // `result`. No real capture of this exists (it needs a spent window).
+      const obj = { ...JSON.parse(fixture("bad-model")), result: SESSION_LIMIT, api_error_status: 429 };
+      const { events, error } = await run(providerWith([JSON.stringify(obj)], 1));
+      expect(error?.category).toBe("subscription_limit");
+      expect(error?.resetsAt).toBe("10:10pm (Europe/London)");
+      expect(events.filter((e) => e.type === "content_block_delta")).toEqual([]);
+    });
+
+    it("the numbers in a failed result's JSON are not read as a throttle", async () => {
+      // api_error_status 404 and the usage block sit beside the message. Only
+      // the message is evidence.
+      const obj = { ...JSON.parse(fixture("bad-model")), api_error_status: 429, result: "Something else went wrong." };
+      const { error } = await run(providerWith([JSON.stringify(obj)], 1));
+      expect(error?.category).toBe("cli_crashed");
+    });
+
+    it("is_error with exit 0 is still a failure", async () => {
+      const obj = { ...JSON.parse(fixture("bad-model")) };
+      const { events, error } = await run(providerWith([JSON.stringify(obj)], 0));
+      expect(error).toBeInstanceOf(ClassifiedError);
+      expect(events.filter((e) => e.type === "content_block_delta")).toEqual([]);
+    });
+
+    it("stdout that is not the result object is the text, with no usage (an older CLI)", async () => {
+      const { events, error } = await run(providerWith(['{"tam": ', '"$9B"}'], 0));
+      expect(error).toBeUndefined();
+      expect(events.map((e) => (e.type === "content_block_delta" ? e.delta.text : "")).join("")).toBe('{"tam": "$9B"}');
+      expect(events.find((e) => e.type === "message_delta")).toMatchObject({ usage: { output_tokens: 0 } });
+    });
   });
 
   it("throws ClassifiedError(cli_missing) when CLI not installed", async () => {
