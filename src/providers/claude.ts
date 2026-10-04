@@ -13,6 +13,7 @@ import {
 } from "./base.js";
 import { runCapture, which } from "./detect-util.js";
 import {
+  parsePlainResult,
   LineBuffer,
   newResearchParseState,
   researchArgs,
@@ -202,7 +203,12 @@ export class ClaudeProvider implements Provider {
     // switches to stream-json so the bridge can report what was retrieved. A
     // run WITHOUT `research` keeps exactly the arguments above.
     const research = request.research !== undefined;
-    if (research) args.push(...researchArgs());
+    // A plain run asks for the CLI's JSON result so the bridge can report what
+    // the run cost. Plain text carries no usage, so every tool-less run (a
+    // module with research off, and the app's revision pass) was reported as 0
+    // tokens in and 0 out. Nothing is lost by it: the answer was already held
+    // until the exit code, and it arrives as one piece either way.
+    args.push(...(research ? researchArgs() : ["--output-format", "json"]));
     const stdinPayload = buildClaudePrompt(request);
 
     const child = this.deps.spawnFn(detected.binary, args, {
@@ -294,11 +300,14 @@ export class ClaudeProvider implements Provider {
       });
 
       const stderr = stderrChunks.join("");
+      // Null when stdout is not the JSON result (an older CLI, or a crash that
+      // printed plain text): stdout is then the text, as before.
+      const plain = research ? null : parsePlainResult(totalOut);
       // stream-json reports a failed run in its `result` event, and a run that
       // produced no `result` at all did not finish, whatever the exit code says.
       const researchFailed =
         research && (researchState.final === null || researchState.final.isError);
-      if (exitCode !== 0 || researchFailed) {
+      if (exitCode !== 0 || researchFailed || plain?.isError) {
         // The exit code is the ONLY trigger. Measured behaviour: the Claude CLI
         // reports failures on STDOUT with exit=1 and leaves stderr EMPTY (a bad
         // --model prints the explanation to stdout, stderr ""). So scanning
@@ -306,7 +315,9 @@ export class ClaudeProvider implements Provider {
         // safe once the CLI has already told us the run failed. A false positive
         // here can only mislabel an already-failed run; it can no longer destroy
         // a successful one.
-        const evidence = [stderr, totalOut].filter(Boolean).join("\n").trim();
+        // From a JSON result the evidence is what the CLI said, not the JSON
+        // around it (which is full of numbers a throttle pattern could match).
+        const evidence = [stderr, plain ? plain.text : totalOut].filter(Boolean).join("\n").trim();
         const throttle = classifyThrottle(evidence);
         if (throttle) {
           throw new ClassifiedError(
@@ -337,7 +348,8 @@ export class ClaudeProvider implements Provider {
       }
 
       // The run succeeded: now, and only now, the answer goes to the client.
-      for (const text of held) {
+      for (const text of plain ? [plain.text] : held) {
+        if (text.length === 0) continue;
         yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } };
       }
 
@@ -365,7 +377,9 @@ export class ClaudeProvider implements Provider {
       yield {
         type: "message_delta",
         delta: { stop_reason: "end_turn" },
-        usage: { output_tokens: 0 },
+        usage: plain
+          ? { output_tokens: plain.outputTokens, input_tokens: plain.inputTokens }
+          : { output_tokens: 0 },
       };
       yield { type: "message_stop" };
     } finally {

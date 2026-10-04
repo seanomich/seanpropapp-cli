@@ -259,7 +259,9 @@ describe("claude provider — research run", () => {
 
   // The research flags must never leak into an ordinary run: `--tools` changes
   // what the model can do, and stream-json would put raw JSON into the module.
-  it("leaves a run WITHOUT research on exactly the arguments it had before", async () => {
+  // The one addition since: `--output-format json`, so a plain run reports its
+  // usage. It grants no tool and is parsed back to plain text by the bridge.
+  it("leaves a run WITHOUT research with no tool flags: its arguments plus the JSON result format only", async () => {
     const seen: { args?: string[] } = {};
     await collect(provider(["ok"], 0, seen).stream({ model: "haiku", system: "sys", messages: [{ role: "user", content: "x" }] }));
     expect(seen.args).toEqual([
@@ -267,7 +269,11 @@ describe("claude provider — research run", () => {
       "--strict-mcp-config", "--mcp-config", JSON.stringify({ mcpServers: {} }),
       "--setting-sources", "project,local",
       "--system-prompt", "sys",
+      "--output-format", "json",
     ]);
+    expect(seen.args).not.toContain("--tools");
+    expect(seen.args).not.toContain("--allowedTools");
+    expect(seen.args).not.toContain("stream-json");
   });
 
   it("streams the tool blocks, then the final answer as the only text", async () => {

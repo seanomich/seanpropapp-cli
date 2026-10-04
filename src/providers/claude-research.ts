@@ -227,6 +227,59 @@ export function totalUsage(modelUsage: unknown): { input: number; output: number
   return seen ? { input, output } : null;
 }
 
+/** What one `claude --print --output-format json` run reported. */
+export interface PlainResult {
+  text: string;
+  isError: boolean;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+/**
+ * Read the single `result` object a plain (tool-less) run prints with
+ * `--output-format json`. Measured on Claude Code 2.1.289: one JSON object on
+ * stdout, `type: "result"`, the answer in `result`, and the same `usage` and
+ * `modelUsage` the stream-json result event carries. A failed run prints the
+ * same object with `is_error: true`, its explanation in `result`, and exits 1.
+ *
+ * Returns null for anything else (an older CLI that ignores the flag, a crash
+ * that printed plain text), and the caller then treats stdout as the text, as
+ * it did before. Some CLI versions print an array of events; the result is
+ * taken from it.
+ */
+export function parsePlainResult(stdout: string): PlainResult | null {
+  const trimmed = stdout.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+  const evt = Array.isArray(parsed)
+    ? [...parsed].reverse().find((x) => x && typeof x === "object" && (x as { type?: unknown }).type === "result")
+    : parsed;
+  if (!evt || typeof evt !== "object") return null;
+  const e = evt as {
+    type?: unknown;
+    result?: unknown;
+    is_error?: unknown;
+    usage?: { output_tokens?: unknown; input_tokens?: unknown };
+    modelUsage?: unknown;
+  };
+  if (e.type !== "result" || typeof e.result !== "string") return null;
+  const total = totalUsage(e.modelUsage);
+  const num = (v: unknown) => (typeof v === "number" ? v : 0);
+  return {
+    text: e.result,
+    isError: e.is_error === true,
+    // As on the research path: `modelUsage` is the run's real total (it counts
+    // cached input); `usage.input_tokens` alone read 9 on a run that used 14,985.
+    inputTokens: total?.input ?? num(e.usage?.input_tokens),
+    outputTokens: total?.output ?? num(e.usage?.output_tokens),
+  };
+}
+
 /**
  * Split a byte stream into complete lines. stdout chunk boundaries do not
  * respect JSONL line boundaries, and a search result line is several kB, so a
