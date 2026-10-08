@@ -20,14 +20,50 @@ export interface AnthropicLikeRequest {
   messages: AnthropicMessage[];
   stream?: boolean;
   temperature?: number;
+  /**
+   * proposition-app#716: present when the app wants this run to research live
+   * sources. A provider that cannot research ignores it and runs as before; the
+   * app learns what was retrieved from the events, never from the request.
+   * The budgets are advisory here (the prompt states them): a local CLI has no
+   * per-tool call cap to enforce them with.
+   */
+  research?: { max_searches?: number; max_fetches?: number };
 }
+
+/** Anthropic server-tool blocks the bridge re-emits for a research run. */
+export type ResearchContentBlock =
+  | {
+      type: "server_tool_use";
+      id: string;
+      name: "web_search" | "web_fetch";
+      input: { query: string } | { url: string };
+    }
+  | {
+      type: "web_search_tool_result";
+      tool_use_id: string;
+      content:
+        | Array<{ type: "web_search_result"; url: string; title?: string }>
+        | { type: "web_search_tool_result_error"; error_code: string };
+    }
+  | {
+      type: "web_fetch_tool_result";
+      tool_use_id: string;
+      content:
+        | { type: "web_fetch_result"; url: string; retrieved_at: string }
+        | { type: "web_fetch_tool_result_error"; error_code: string };
+    };
 
 export type AnthropicSSEEvent =
   | { type: "message_start"; message: { id: string; model: string } }
   | { type: "content_block_start"; index: number; content_block: { type: "text"; text: string } }
+  | { type: "content_block_start"; index: number; content_block: ResearchContentBlock }
   | { type: "content_block_delta"; index: number; delta: { type: "text_delta"; text: string } }
   | { type: "content_block_stop"; index: number }
-  | { type: "message_delta"; delta: { stop_reason: string | null }; usage?: { output_tokens: number } }
+  | {
+      type: "message_delta";
+      delta: { stop_reason: string | null };
+      usage?: { output_tokens: number; input_tokens?: number };
+    }
   | { type: "message_stop" }
   | {
       type: "error";
@@ -41,6 +77,9 @@ export type AnthropicSSEEvent =
         category?: ClassifiedError["category"];
         message: string;
         retry_after_seconds?: number;
+        /** ADDITIVE: when a subscription window resets, as the CLI wrote it
+         *  ("10:10pm (Europe/London)"). Present only when the CLI said. */
+        resets_at?: string;
       };
     };
 
@@ -90,6 +129,8 @@ export class ClassifiedError extends Error {
     | "short_output"
     | "unknown";
   public readonly retryAfterSeconds?: number;
+  /** When the user's window resets, verbatim from the CLI, when it said. */
+  public readonly resetsAt?: string;
   public readonly provider?: string;
 
   constructor(
@@ -97,6 +138,7 @@ export class ClassifiedError extends Error {
     opts: {
       category: ClassifiedError["category"];
       retryAfterSeconds?: number;
+      resetsAt?: string;
       provider?: string;
     },
   ) {
@@ -104,6 +146,7 @@ export class ClassifiedError extends Error {
     this.name = "ClassifiedError";
     this.category = opts.category;
     this.retryAfterSeconds = opts.retryAfterSeconds;
+    this.resetsAt = opts.resetsAt;
     this.provider = opts.provider;
   }
 }

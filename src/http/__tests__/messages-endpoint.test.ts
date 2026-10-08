@@ -111,6 +111,32 @@ describe("/v1/messages", () => {
     expect(text).toContain('"retry_after_seconds":42');
   });
 
+  it("sends the reset time of a spent window, and exactly one terminal event", async () => {
+    const err = new ClassifiedError("Claude subscription limit reached (exit 1): You've hit your session limit · resets 10:10pm (Europe/London)", {
+      category: "subscription_limit",
+      resetsAt: "10:10pm (Europe/London)",
+    });
+    const res = await post(
+      appWith(streamingProvider("claude", [{ type: "message_start", message: { id: "m", model: "c" } }], err)),
+      OK_BODY,
+    );
+    const text = await res.text();
+    expect(text).toContain('"category":"subscription_limit"');
+    expect(text).toContain('"resets_at":"10:10pm (Europe/London)"');
+    expect(text.match(/^event: error$/gm)).toHaveLength(1);
+    expect(text).not.toContain("event: message_stop");
+    expect(text).not.toContain("content_block_delta");
+  });
+
+  it("omits resets_at when the CLI named no reset", async () => {
+    const err = new ClassifiedError("boom", { category: "rate_limited", retryAfterSeconds: 7 });
+    const res = await post(
+      appWith(streamingProvider("claude", [{ type: "message_start", message: { id: "m", model: "c" } }], err)),
+      OK_BODY,
+    );
+    expect(await res.text()).not.toContain("resets_at");
+  });
+
   // CLI #27 wire contract. The app needs to tell "your allowance is spent" from
   // "the provider is throttling or overloaded" to offer the right recovery, and
   // the legacy `type` field cannot express that: both throttling kinds map to

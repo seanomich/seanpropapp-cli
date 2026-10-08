@@ -9,7 +9,17 @@ export interface HandshakeResponse {
   providers: Record<string, ProviderDetectResult>;
   paired_at: string | null;
   device_name: string;
+  /**
+   * What this bridge can do beyond a plain run, so the app asks only for what
+   * will actually happen (proposition-app#716). `research` lists the provider
+   * ids whose runs can search and fetch the web. Absent on bridges before
+   * beta.19, which the app reads as "no research".
+   */
+  capabilities: { research: string[] };
 }
+
+/** Provider ids that implement `request.research`. */
+export const RESEARCH_PROVIDERS: readonly string[] = ["claude"];
 
 export function deviceName(): string {
   const host = os.hostname();
@@ -36,6 +46,13 @@ export function makeHandshakeHandler(deps: HandshakeDeps) {
       providers: Object.fromEntries(entries),
       paired_at: deps.pairedAt(),
       device_name: deviceName(),
+      capabilities: {
+        // Only providers that are actually installed: advertising research for
+        // a CLI the user does not have would promise a run that cannot happen.
+        research: entries
+          .filter(([id, d]) => RESEARCH_PROVIDERS.includes(id) && d.installed)
+          .map(([id]) => id),
+      },
     };
     return c.json(body, 200);
   };

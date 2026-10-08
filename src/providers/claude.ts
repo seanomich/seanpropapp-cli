@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { detectRateLimit, parseRetryAfter, classifyThrottle, throttleHeadline } from "./rate-limit-detect.js";
+import { detectRateLimit, parseRetryAfter, parseResetTime, classifyThrottle, throttleHeadline } from "./rate-limit-detect.js";
 export { detectRateLimit, parseRetryAfter };
 import { spawn } from "node:child_process";
 import {
@@ -12,6 +12,13 @@ import {
   type ProviderDetectResult,
 } from "./base.js";
 import { runCapture, which } from "./detect-util.js";
+import {
+  parsePlainResult,
+  LineBuffer,
+  newResearchParseState,
+  researchArgs,
+  translateResearchEvent,
+} from "./claude-research.js";
 
 /**
  * Override hooks for testing. The provider takes optional injectables so we
@@ -192,6 +199,16 @@ export class ClaudeProvider implements Provider {
     if (request.system) {
       args.push("--system-prompt", request.system);
     }
+    // proposition-app#716: a research run permits WebSearch and WebFetch and
+    // switches to stream-json so the bridge can report what was retrieved. A
+    // run WITHOUT `research` keeps exactly the arguments above.
+    const research = request.research !== undefined;
+    // A plain run asks for the CLI's JSON result so the bridge can report what
+    // the run cost. Plain text carries no usage, so every tool-less run (a
+    // module with research off, and the app's revision pass) was reported as 0
+    // tokens in and 0 out. Nothing is lost by it: the answer was already held
+    // until the exit code, and it arrives as one piece either way.
+    args.push(...(research ? researchArgs() : ["--output-format", "json"]));
     const stdinPayload = buildClaudePrompt(request);
 
     const child = this.deps.spawnFn(detected.binary, args, {
@@ -216,14 +233,41 @@ export class ClaudeProvider implements Provider {
 
     const messageId = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     yield { type: "message_start", message: { id: messageId, model: request.model } };
-    yield {
-      type: "content_block_start",
-      index: 0,
-      content_block: { type: "text", text: "" },
-    };
+    // In a research run the tool blocks come first and the text block last, so
+    // its index is only known once the research is over.
+    if (!research) {
+      yield {
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "text", text: "" },
+      };
+    }
 
     try {
       let totalOut = "";
+      const researchState = newResearchParseState();
+      if (research && child.stdout) {
+        const lines = new LineBuffer();
+        const translate = (line: string): AnthropicSSEEvent[] => {
+          let evt: unknown;
+          try {
+            evt = JSON.parse(line);
+          } catch {
+            // Not JSON: keep it as failure evidence. The CLI prints a bad
+            // --model or an auth failure as plain text even in stream-json mode.
+            totalOut += line + "\n";
+            return [];
+          }
+          return translateResearchEvent(evt, researchState);
+        };
+        for await (const chunk of child.stdout as AsyncIterable<Buffer | string>) {
+          const text = typeof chunk === "string" ? chunk : chunk.toString();
+          for (const line of lines.push(text)) yield* translate(line);
+        }
+        for (const line of lines.flush()) yield* translate(line);
+        // The final answer is failure evidence too when the run reports an error.
+        if (researchState.final) totalOut += researchState.final.text;
+      }
       // NO rate-limit inspection of the content stream. `claude --print` is not
       // incremental: it emits the ENTIRE answer as a single stdout chunk (proven
       // by measurement, 1 chunk). So any "only look before real content arrives"
@@ -231,16 +275,22 @@ export class ClaudeProvider implements Provider {
       // model's own prose. That is what killed two production runs on the
       // Competitive Landscape module. Classification happens ONLY after a
       // non-zero exit, below.
-      if (child.stdout) {
+      //
+      // And NOTHING is sent to the client until the exit code is known. The CLI
+      // reports a failure by printing it on stdout and exiting 1 (a spent
+      // session window prints "You've hit your session limit · resets 10:10pm
+      // (Europe/London)"). Forwarding stdout as it arrived sent that sentence
+      // to the app as the first text of the module and THEN an error event,
+      // so the client saw content and a failure for the same run. Since the
+      // whole answer is one chunk at the end anyway, holding it for the exit
+      // code costs no latency.
+      const held: string[] = [];
+      if (!research && child.stdout) {
         for await (const chunk of child.stdout as AsyncIterable<Buffer | string>) {
           const text = typeof chunk === "string" ? chunk : chunk.toString();
           if (text.length === 0) continue;
           totalOut += text;
-          yield {
-            type: "content_block_delta",
-            index: 0,
-            delta: { type: "text_delta", text },
-          };
+          held.push(text);
         }
       }
 
@@ -250,7 +300,14 @@ export class ClaudeProvider implements Provider {
       });
 
       const stderr = stderrChunks.join("");
-      if (exitCode !== 0) {
+      // Null when stdout is not the JSON result (an older CLI, or a crash that
+      // printed plain text): stdout is then the text, as before.
+      const plain = research ? null : parsePlainResult(totalOut);
+      // stream-json reports a failed run in its `result` event, and a run that
+      // produced no `result` at all did not finish, whatever the exit code says.
+      const researchFailed =
+        research && (researchState.final === null || researchState.final.isError);
+      if (exitCode !== 0 || researchFailed || plain?.isError) {
         // The exit code is the ONLY trigger. Measured behaviour: the Claude CLI
         // reports failures on STDOUT with exit=1 and leaves stderr EMPTY (a bad
         // --model prints the explanation to stdout, stderr ""). So scanning
@@ -258,7 +315,9 @@ export class ClaudeProvider implements Provider {
         // safe once the CLI has already told us the run failed. A false positive
         // here can only mislabel an already-failed run; it can no longer destroy
         // a successful one.
-        const evidence = [stderr, totalOut].filter(Boolean).join("\n").trim();
+        // From a JSON result the evidence is what the CLI said, not the JSON
+        // around it (which is full of numbers a throttle pattern could match).
+        const evidence = [stderr, plain ? plain.text : totalOut].filter(Boolean).join("\n").trim();
         const throttle = classifyThrottle(evidence);
         if (throttle) {
           throw new ClassifiedError(
@@ -274,6 +333,8 @@ export class ClaudeProvider implements Provider {
             {
               category: throttle,
               retryAfterSeconds: parseRetryAfter(evidence),
+              // Only the user's own window has a reset to wait for.
+              resetsAt: throttle === "subscription_limit" ? parseResetTime(evidence) : undefined,
               provider: this.name,
             },
           );
@@ -286,11 +347,39 @@ export class ClaudeProvider implements Provider {
         );
       }
 
+      // The run succeeded: now, and only now, the answer goes to the client.
+      for (const text of plain ? [plain.text] : held) {
+        if (text.length === 0) continue;
+        yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } };
+      }
+
+      if (research && researchState.final) {
+        const index = researchState.index;
+        yield { type: "content_block_start", index, content_block: { type: "text", text: "" } };
+        yield {
+          type: "content_block_delta",
+          index,
+          delta: { type: "text_delta", text: researchState.final.text },
+        };
+        yield { type: "content_block_stop", index };
+        yield {
+          type: "message_delta",
+          delta: { stop_reason: "end_turn" },
+          usage: {
+            output_tokens: researchState.final.outputTokens,
+            input_tokens: researchState.final.inputTokens,
+          },
+        };
+        yield { type: "message_stop" };
+        return;
+      }
       yield { type: "content_block_stop", index: 0 };
       yield {
         type: "message_delta",
         delta: { stop_reason: "end_turn" },
-        usage: { output_tokens: 0 },
+        usage: plain
+          ? { output_tokens: plain.outputTokens, input_tokens: plain.inputTokens }
+          : { output_tokens: 0 },
       };
       yield { type: "message_stop" };
     } finally {
